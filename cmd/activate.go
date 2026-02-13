@@ -2,12 +2,10 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
-	"ai-daemon/pkg/providers/antigravity"
-	"ai-daemon/pkg/providers/geminicli"
-	"ai-daemon/pkg/providers/glm"
-	"ai-daemon/pkg/providers/interfaces"
+	"ai-daemon/pkg/providers"
 
 	"github.com/spf13/cobra"
 )
@@ -26,18 +24,28 @@ var activateCmd = &cobra.Command{
 			targets[arg] = true
 		}
 
-		fmt.Printf("\n\033[1;36m[*] Initializing AI Quota Timers (%s)\033[0m\n", time.Now().Format("15:04:05"))
+		fmt.Printf("\n\033[1;36mInitializing AI Quota Timers (%s)\033[0m\n", time.Now().Format("15:04:05"))
 		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
 
-		registry := []interfaces.Provider{
-			glm.NewProvider(),
-			antigravity.NewProvider(),
-			geminicli.NewProvider(),
-		}
+		registry := providers.LoadProvidersFromConfig()
 
 		for _, p := range registry {
-			// If no args, activate all. If args, only activate those in targets.
-			if len(args) > 0 && !targets["all"] && !targets[p.ID()] {
+			id := p.ID()
+			shouldRun := false
+			if len(args) == 0 || targets["all"] {
+				shouldRun = true
+			} else if targets[id] {
+				shouldRun = true
+			} else {
+				for t := range targets {
+					if strings.HasPrefix(id, t+"_") || id == t {
+						shouldRun = true
+						break
+					}
+				}
+			}
+
+			if !shouldRun {
 				continue
 			}
 

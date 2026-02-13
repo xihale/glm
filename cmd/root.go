@@ -13,9 +13,9 @@ var cfgFile string
 
 var rootCmd = &cobra.Command{
 	Use:   "ai-daemon",
-	Short: "A system-level daemon for heterogeneous AI service integration",
-	Long: `ai-daemon integrates GLM Coding Plan, Gemini Web, and Antigravity
-IDE into a unified interface for quota monitoring and heartbeat management.`,
+	Short: "A system-level daemon for AI service quota management",
+	Long: `ai-daemon integrates GLM, Gemini CLI, and Antigravity into a unified 
+interface for quota monitoring and automated heartbeat management.`,
 	CompletionOptions: cobra.CompletionOptions{
 		DisableDefaultCmd: true,
 	},

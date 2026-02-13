@@ -18,13 +18,15 @@ var installServiceCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install systemd user service",
 	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("\n\033[1;36mInstalling Systemd User Service\033[0m\n")
+		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
 		if err := installService(); err != nil {
-			fmt.Printf("Error installing service: %v\n", err)
+			fmt.Printf("  \033[31m[-] Error: %v\033[0m\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("Service installed successfully.")
-		fmt.Println("Run 'systemctl --user start ai-daemon' to start it.")
-		fmt.Println("Run 'systemctl --user enable ai-daemon' to start on login.")
+		fmt.Printf("\n\033[32m[✔] Service installed successfully.\033[0m\n")
+		fmt.Println("\033[34m[!] Run 'systemctl --user start ai-daemon' to start it.\033[0m")
+		fmt.Println("\033[34m[!] Run 'systemctl --user enable ai-daemon' to start on login.\033[0m\n")
 	},
 }
 
@@ -32,11 +34,13 @@ var uninstallServiceCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Uninstall systemd user service",
 	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("\n\033[1;36mUninstalling Systemd User Service\033[0m\n")
+		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
 		if err := uninstallService(); err != nil {
-			fmt.Printf("Error uninstalling service: %v\n", err)
+			fmt.Printf("  \033[31m[-] Error: %v\033[0m\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("Service uninstalled successfully.")
+		fmt.Printf("\n\033[32m[✔] Service uninstalled successfully.\033[0m\n")
 	},
 }
 
@@ -102,11 +106,8 @@ func installService() error {
 		return err
 	}
 
-	// Reload daemon
-	// We can't easily call systemctl from here portably/reliably without exec
-	// but we can instruct user.
-	fmt.Println("Created:", serviceFile)
-	fmt.Println("Please run: systemctl --user daemon-reload")
+	fmt.Printf("  [*] Created unit file: %s\n", serviceFile)
+	fmt.Println("  [*] Please run: systemctl --user daemon-reload")
 
 	return nil
 }
@@ -123,7 +124,7 @@ func uninstallService() error {
 		return err
 	}
 
-	fmt.Println("Removed:", serviceFile)
-	fmt.Println("Please run: systemctl --user daemon-reload")
+	fmt.Printf("  [*] Removed unit file: %s\n", serviceFile)
+	fmt.Println("  [*] Please run: systemctl --user daemon-reload")
 	return nil
 }

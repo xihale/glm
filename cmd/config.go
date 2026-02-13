@@ -20,6 +20,9 @@ var setBaseURLCmd = &cobra.Command{
 	Short: "Set custom Base URL for a provider (e.g. glm)",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("\n\033[1;36mConfigure Base URL\033[0m\n")
+		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
+
 		provider := args[0]
 		url := args[1]
 
@@ -27,15 +30,15 @@ var setBaseURLCmd = &cobra.Command{
 		case "glm":
 			viper.Set("glm.base_url", url)
 		default:
-			fmt.Printf("Unknown provider: %s\n", provider)
+			fmt.Printf("  \033[31m[-] Error: Unknown provider: %s\033[0m\n", provider)
 			os.Exit(1)
 		}
 
 		if err := config.SaveConfig(); err != nil {
-			fmt.Printf("Error saving config: %v\n", err)
+			fmt.Printf("  \033[31m[-] Error saving config: %v\033[0m\n", err)
 			return
 		}
-		fmt.Printf("Base URL for %s set to %s\n", provider, url)
+		fmt.Printf("  \033[32m[+] Base URL for %s set to %s\033[0m\n\n", provider, url)
 	},
 }
 

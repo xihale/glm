@@ -8,10 +8,7 @@ import (
 
 	"ai-daemon/internal/utils"
 	"ai-daemon/pkg/config"
-	"ai-daemon/pkg/providers/antigravity"
-	"ai-daemon/pkg/providers/geminicli"
-	"ai-daemon/pkg/providers/glm"
-	"ai-daemon/pkg/providers/interfaces"
+	"ai-daemon/pkg/providers"
 	pkgutils "ai-daemon/pkg/utils"
 
 	"github.com/spf13/cobra"
@@ -46,15 +43,12 @@ func init() {
 }
 
 func runDaemonOneShot() {
-	fmt.Printf("[%s] Starting one-shot daemon task...\n", time.Now().Format(time.RFC3339))
+	fmt.Printf("\n\033[1;36mOne-Shot Daemon Task (%s)\033[0m\n", time.Now().Format("15:04:05"))
+	fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
 
-	refreshGeminiTokenIfNeeded()
+	refreshAllTokens()
 
-	registry := []interfaces.Provider{
-		glm.NewProvider(),
-		antigravity.NewProvider(),
-		geminicli.NewProvider(),
-	}
+	registry := providers.LoadProvidersFromConfig()
 
 	var earliestReset time.Time
 	now := time.Now()
@@ -143,37 +137,66 @@ func runDaemonOneShot() {
 	fmt.Println("Daemon task completed.")
 }
 
-func refreshGeminiTokenIfNeeded() {
+func refreshAllTokens() {
 	geminiConfig := config.Current.Gemini
-	if geminiConfig.RefreshToken == "" {
-		return
+	if geminiConfig.RefreshToken != "" {
+		if geminiConfig.Expiry.IsZero() || time.Now().Add(5*time.Minute).After(geminiConfig.Expiry) {
+			fmt.Printf("Refreshing Global Gemini token...\n")
+			newTokens, err := utils.RefreshGeminiToken(geminiConfig.RefreshToken)
+			if err != nil {
+				fmt.Printf("Warning: Global Token refresh failed: %v\n", err)
+			} else {
+				config.Current.Gemini.AccessToken = newTokens.AccessToken
+				viper.Set("gemini.access_token", newTokens.AccessToken)
+
+				if newTokens.RefreshToken != "" {
+					config.Current.Gemini.RefreshToken = newTokens.RefreshToken
+					viper.Set("gemini.refresh_token", newTokens.RefreshToken)
+				}
+
+				if newTokens.ExpiresIn > 0 {
+					expiry := time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
+					config.Current.Gemini.Expiry = expiry
+					viper.Set("gemini.expiry", expiry)
+				}
+				fmt.Println("Global Token refreshed successfully.")
+			}
+		}
 	}
 
-	if geminiConfig.Expiry.IsZero() || time.Now().Add(5*time.Minute).After(geminiConfig.Expiry) {
-		fmt.Printf("Refreshing Gemini token...\n")
-		newTokens, err := utils.RefreshGeminiToken(geminiConfig.RefreshToken)
-		if err != nil {
-			fmt.Printf("Warning: Token refresh failed: %v\n", err)
-			return
+	var updated bool
+	for i, pCfg := range config.Current.Providers {
+		if pCfg.RefreshToken == "" {
+			continue
 		}
 
-		config.Current.Gemini.AccessToken = newTokens.AccessToken
-		viper.Set("gemini.access_token", newTokens.AccessToken)
+		if pCfg.Expiry.IsZero() || time.Now().Add(5*time.Minute).After(pCfg.Expiry) {
+			fmt.Printf("Refreshing token for provider '%s' (%s)...\n", pCfg.Name, pCfg.Type)
+			newTokens, err := utils.RefreshGeminiToken(pCfg.RefreshToken)
+			if err != nil {
+				fmt.Printf("Warning: Token refresh failed for '%s': %v\n", pCfg.Name, err)
+				continue
+			}
 
-		if newTokens.RefreshToken != "" {
-			config.Current.Gemini.RefreshToken = newTokens.RefreshToken
-			viper.Set("gemini.refresh_token", newTokens.RefreshToken)
+			config.Current.Providers[i].AccessToken = newTokens.AccessToken
+			if newTokens.RefreshToken != "" {
+				config.Current.Providers[i].RefreshToken = newTokens.RefreshToken
+			}
+			if newTokens.ExpiresIn > 0 {
+				config.Current.Providers[i].Expiry = time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
+			}
+			updated = true
+			fmt.Printf("Token refreshed for '%s'.\n", pCfg.Name)
 		}
+	}
 
-		if newTokens.ExpiresIn > 0 {
-			expiry := time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
-			config.Current.Gemini.Expiry = expiry
-			viper.Set("gemini.expiry", expiry)
+	if updated || geminiConfig.RefreshToken != "" {
+		if updated {
+			viper.Set("providers", config.Current.Providers)
 		}
 
 		if err := config.SaveConfig(); err != nil {
 			fmt.Printf("Warning: Failed to save config: %v\n", err)
 		}
-		fmt.Println("Token refreshed successfully.")
 	}
 }

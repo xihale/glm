@@ -13,6 +13,22 @@ type Config struct {
 	GLM         GLMConfig         `mapstructure:"glm" json:"glm"`
 	Gemini      GeminiConfig      `mapstructure:"gemini" json:"gemini"`
 	Antigravity AntigravityConfig `mapstructure:"antigravity" json:"antigravity"`
+	Providers   []ProviderConfig  `mapstructure:"providers" json:"providers"`
+}
+
+type ProviderConfig struct {
+	Name          string                 `mapstructure:"name" json:"name"`
+	Type          string                 `mapstructure:"type" json:"type"`
+	APIKey        string                 `mapstructure:"api_key" json:"api_key,omitempty"`
+	BaseURL       string                 `mapstructure:"base_url" json:"base_url,omitempty"`
+	Enabled       bool                   `mapstructure:"enabled" json:"enabled,omitempty"`
+	Secure1PSID   string                 `mapstructure:"secure_1psid" json:"secure_1psid,omitempty"`
+	Secure1PSIDTS string                 `mapstructure:"secure_1psidts" json:"secure_1psidts,omitempty"`
+	AccessToken   string                 `mapstructure:"access_token" json:"access_token,omitempty"`
+	RefreshToken  string                 `mapstructure:"refresh_token" json:"refresh_token,omitempty"`
+	ProjectID     string                 `mapstructure:"project_id" json:"project_id,omitempty"`
+	Expiry        time.Time              `mapstructure:"expiry" json:"expiry,omitempty"`
+	Extra         map[string]interface{} `mapstructure:",remain" json:"extra,omitempty"`
 }
 
 type GLMConfig struct {

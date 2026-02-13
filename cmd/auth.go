@@ -26,26 +26,28 @@ var setGlmCmd = &cobra.Command{
 	Use:   "glm",
 	Short: "Set GLM Coding Plan API Key (Secure Prompt)",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Print("Enter GLM API Key: ")
+		fmt.Printf("\n\033[1;36mSet GLM API Key\033[0m\n")
+		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
+		fmt.Print("  [*] Enter GLM API Key: ")
 		bytePassword, err := term.ReadPassword(int(syscall.Stdin))
 		if err != nil {
-			fmt.Printf("\nError reading input: %v\n", err)
+			fmt.Printf("\n  \033[31m[-] Error reading input: %v\033[0m\n", err)
 			return
 		}
 		fmt.Println()
 
 		key := string(bytePassword)
 		if key == "" {
-			fmt.Println("API Key cannot be empty.")
+			fmt.Println("  \033[33m[!] API Key cannot be empty.\033[0m")
 			return
 		}
 
 		viper.Set("glm.api_key", key)
 		if err := config.SaveConfig(); err != nil {
-			fmt.Printf("Error saving config: %v\n", err)
+			fmt.Printf("  \033[31m[-] Error saving config: %v\033[0m\n", err)
 			return
 		}
-		fmt.Println("GLM API Key saved securely.")
+		fmt.Println("  \033[32m[+] GLM API Key saved securely.\033[0m\n")
 	},
 }
 
@@ -53,18 +55,21 @@ var setGeminiCmd = &cobra.Command{
 	Use:   "gemini",
 	Short: "Set Gemini Web session cookies (Secure Prompt)",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Print("Enter __Secure-1PSID: ")
+		fmt.Printf("\n\033[1;36mSet Gemini Web Cookies\033[0m\n")
+		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
+
+		fmt.Print("  [*] Enter __Secure-1PSID: ")
 		byte1PSID, err := term.ReadPassword(int(syscall.Stdin))
 		if err != nil {
-			fmt.Printf("\nError reading input: %v\n", err)
+			fmt.Printf("\n  \033[31m[-] Error reading input: %v\033[0m\n", err)
 			return
 		}
 		fmt.Println()
 
-		fmt.Print("Enter __Secure-1PSIDTS: ")
+		fmt.Print("  [*] Enter __Secure-1PSIDTS: ")
 		byte1PSIDTS, err := term.ReadPassword(int(syscall.Stdin))
 		if err != nil {
-			fmt.Printf("\nError reading input: %v\n", err)
+			fmt.Printf("\n  \033[31m[-] Error reading input: %v\033[0m\n", err)
 			return
 		}
 		fmt.Println()
@@ -73,17 +78,17 @@ var setGeminiCmd = &cobra.Command{
 		psidts := string(byte1PSIDTS)
 
 		if psid == "" || psidts == "" {
-			fmt.Println("Session cookies cannot be empty.")
+			fmt.Println("  \033[33m[!] Session cookies cannot be empty.\033[0m")
 			return
 		}
 
 		viper.Set("gemini.secure_1psid", psid)
 		viper.Set("gemini.secure_1psidts", psidts)
 		if err := config.SaveConfig(); err != nil {
-			fmt.Printf("Error saving config: %v\n", err)
+			fmt.Printf("  \033[31m[-] Error saving config: %v\033[0m\n", err)
 			return
 		}
-		fmt.Println("Gemini session cookies saved securely.")
+		fmt.Println("  \033[32m[+] Gemini session cookies saved securely.\033[0m\n")
 	},
 }
 

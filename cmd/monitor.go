@@ -2,12 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	"ai-daemon/pkg/providers/antigravity"
-	"ai-daemon/pkg/providers/geminicli"
-	"ai-daemon/pkg/providers/glm"
+	"ai-daemon/pkg/providers"
 	"ai-daemon/pkg/providers/interfaces"
 	"ai-daemon/pkg/utils"
 
@@ -24,14 +23,10 @@ var monitorCmd = &cobra.Command{
 			targets[arg] = true
 		}
 
-		fmt.Printf("\n\033[1;36m[*] AI-Daemon Quota Dashboard (%s)\033[0m\n", time.Now().Format("15:04:05"))
+		fmt.Printf("\n\033[1;36mAI-Daemon Quota Dashboard (%s)\033[0m\n", time.Now().Format("15:04:05"))
 		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
 
-		registry := []interfaces.Provider{
-			glm.NewProvider(),
-			antigravity.NewProvider(),
-			geminicli.NewProvider(),
-		}
+		registry := providers.LoadProvidersFromConfig()
 
 		type result struct {
 			p     interfaces.Provider
@@ -42,7 +37,22 @@ var monitorCmd = &cobra.Command{
 		var wg sync.WaitGroup
 
 		for i, p := range registry {
-			if len(args) > 0 && !targets["all"] && !targets[p.ID()] {
+			id := p.ID()
+			shouldRun := false
+			if len(args) == 0 || targets["all"] {
+				shouldRun = true
+			} else if targets[id] {
+				shouldRun = true
+			} else {
+				for t := range targets {
+					if strings.HasPrefix(id, t+"_") || id == t {
+						shouldRun = true
+						break
+					}
+				}
+			}
+
+			if !shouldRun {
 				continue
 			}
 
@@ -66,7 +76,27 @@ var monitorCmd = &cobra.Command{
 			if res.p == nil {
 				continue
 			}
-			fmt.Printf("\033[1;35m[ %s ]\033[0m\n", res.p.Name())
+
+			header := res.p.Name()
+			id := res.p.ID()
+			if strings.HasPrefix(id, "glm") {
+				header = "[GLM Coding Plan]"
+				if id != "glm" {
+					header = fmt.Sprintf("[GLM Coding Plan] (%s)", id)
+				}
+			} else if strings.HasPrefix(id, "antigravity") {
+				header = "[Antigravity]"
+				if id != "antigravity" {
+					header = fmt.Sprintf("[Antigravity] (%s)", id)
+				}
+			} else if strings.HasPrefix(id, "geminicli") {
+				header = "[Gemini CLI]"
+				if id != "geminicli" {
+					header = fmt.Sprintf("[Gemini CLI] (%s)", id)
+				}
+			}
+
+			fmt.Printf("\033[1;35m%s\033[0m\n", header)
 			if res.err != nil {
 				fmt.Printf("  \033[33m[!] %v\033[0m\n", res.err)
 				fmt.Println()
@@ -82,18 +112,20 @@ var monitorCmd = &cobra.Command{
 }
 
 func displayQuota(id string, q *interfaces.QuotaStatus) {
-	switch id {
-	case "glm":
+	if strings.HasPrefix(id, "glm") {
 		color := "\033[32m"
 		if q.Remaining < 20 {
 			color = "\033[31m"
 		}
-		fmt.Printf("  \033[32m[+]\033[0m Quota: %s%d%%\033[0m Remaining | Used: %d%%\n", color, q.Remaining, q.Used)
+		duration := ""
 		if !q.ResetTime.IsZero() {
-			fmt.Printf("  \033[34m[*]\033[0m Next Reset: %s (%s left)\n",
-				q.ResetTime.Local().Format("15:04:05"), utils.FormatTimeUntil(q.ResetTime))
+			duration = fmt.Sprintf(" (%s)", utils.FormatTimeUntil(q.ResetTime))
 		}
-	case "antigravity":
+		fmt.Printf("  %-25s: %s%3d%%\033[0m%s\n", "General", color, q.Remaining, duration)
+		return
+	}
+
+	if strings.HasPrefix(id, "antigravity") {
 		modelMap := utils.ExtractAllModelQuotas(q.Raw)
 		groups := []struct {
 			IDs   []string
@@ -121,27 +153,29 @@ func displayQuota(id string, q *interfaces.QuotaStatus) {
 			if info.Remaining < 20 {
 				color = "\033[31m"
 			}
-			fmt.Printf("  \033[32m[+]\033[0m %-18s: %s%3.0f%%\033[0m", g.Label, color, info.Remaining)
+			duration := ""
 			if !info.ResetTime.IsZero() {
-				fmt.Printf("  (%s / %s left)", info.ResetTime.Local().Format("15:04"), utils.FormatTimeUntil(info.ResetTime))
+				duration = fmt.Sprintf(" (%s)", utils.FormatTimeUntil(info.ResetTime))
 			}
-			fmt.Println()
+			fmt.Printf("  %-25s: %s%3.0f%%\033[0m%s\n", g.Label, color, info.Remaining, duration)
 		}
+		return
+	}
 
-	case "geminicli":
+	if strings.HasPrefix(id, "geminicli") {
 		cliMap := utils.ExtractAllCliQuotas(q.Raw)
-		// To maintain order or just iterate
 		for name, info := range cliMap {
 			color := "\033[32m"
 			if info.Remaining < 20 {
 				color = "\033[31m"
 			}
-			fmt.Printf("  \033[32m[+]\033[0m %-25s: %s%3.0f%%\033[0m", name, color, info.Remaining)
+			duration := ""
 			if !info.ResetTime.IsZero() {
-				fmt.Printf("  (%s / %s left)", info.ResetTime.Local().Format("15:04"), utils.FormatTimeUntil(info.ResetTime))
+				duration = fmt.Sprintf(" (%s)", utils.FormatTimeUntil(info.ResetTime))
 			}
-			fmt.Println()
+			fmt.Printf("  %-25s: %s%3.0f%%\033[0m%s\n", name, color, info.Remaining, duration)
 		}
+		return
 	}
 }
 

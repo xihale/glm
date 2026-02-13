@@ -27,6 +27,7 @@ type Provider struct {
 	BaseURL string
 	Client  *http.Client
 	Debug   bool
+	Config  config.ProviderConfig
 }
 
 func NewProvider() *Provider {
@@ -36,16 +37,40 @@ func NewProvider() *Provider {
 	}
 }
 
-func (p *Provider) Name() string    { return "GLM Coding Plan" }
-func (p *Provider) ID() string      { return "glm" }
+func NewProviderWithConfig(cfg config.ProviderConfig) *Provider {
+	p := NewProvider()
+	p.Config = cfg
+	if cfg.BaseURL != "" {
+		p.BaseURL = cfg.BaseURL
+	}
+	return p
+}
+
+func (p *Provider) Name() string {
+	if p.Config.Name != "" {
+		return "GLM Coding Plan (" + p.Config.Name + ")"
+	}
+	return "GLM Coding Plan"
+}
+func (p *Provider) ID() string {
+	if p.Config.Name != "" {
+		return p.Config.Name
+	}
+	return "glm"
+}
 func (p *Provider) SetDebug(d bool) { p.Debug = d }
 
 func (p *Provider) Authenticate() error {
-	p.APIKey = config.Current.GLM.APIKey
+	if p.Config.APIKey != "" {
+		p.APIKey = p.Config.APIKey
+	} else {
+		p.APIKey = config.Current.GLM.APIKey
+	}
+
 	if p.APIKey == "" {
 		return fmt.Errorf("GLM API Key not found in config")
 	}
-	if config.Current.GLM.BaseURL != "" {
+	if config.Current.GLM.BaseURL != "" && p.BaseURL == BaseURL {
 		p.BaseURL = config.Current.GLM.BaseURL
 	}
 	return nil
@@ -134,12 +159,12 @@ func (p *Provider) Activate(debug bool, force bool) error {
 		timeUntil := time.Until(quota.ResetTime)
 		if quota.Remaining > 10 || (!quota.ResetTime.IsZero() && timeUntil > 0 && timeUntil < (4*time.Hour+59*time.Minute)) {
 			q := pkgutils.ModelQuota{Remaining: float64(quota.Remaining), ResetTime: quota.ResetTime}
-			pkgutils.PrintSkipMessage("GLM Heartbeat", q)
+			pkgutils.PrintSkipMessage("General", q)
 			return nil
 		}
 	}
 
-	fmt.Printf("  [*] Activating %-25s ... ", "GLM Heartbeat")
+	fmt.Printf("  [*] Activating %-25s ... ", "General")
 	err = p.SendHeartbeat()
 
 	if err != nil {
