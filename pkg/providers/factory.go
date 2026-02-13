@@ -22,7 +22,7 @@ func LoadProvidersFromConfig() []interfaces.Provider {
 	}
 
 	// Antigravity (Legacy)
-	if config.Current.Gemini.AccessToken != "" {
+	if config.Current.Gemini.AccessToken != "" && config.Current.Antigravity.Enabled {
 		registry = append(registry, antigravity.NewProvider())
 	}
 

@@ -67,9 +67,42 @@ func (p *Provider) getProjectID() string {
 }
 
 func (p *Provider) Authenticate() error {
-	if p.getAccessToken() == "" {
+	token := p.getAccessToken()
+	if token == "" {
 		return fmt.Errorf("no access token available")
 	}
+
+	refreshToken := p.Config.RefreshToken
+	if refreshToken == "" && p.Config.Name == "" {
+		refreshToken = config.Current.Gemini.RefreshToken
+	}
+
+	expiry := p.Config.Expiry
+	if expiry.IsZero() && p.Config.Name == "" {
+		expiry = config.Current.Gemini.Expiry
+	}
+
+	if refreshToken != "" && !expiry.IsZero() && time.Until(expiry) < 5*time.Minute {
+		fmt.Printf("Refreshing token for %s...\n", p.Name())
+		resp, err := utils.RefreshGeminiToken(refreshToken)
+		if err != nil {
+			return fmt.Errorf("failed to refresh token: %w", err)
+		}
+		fmt.Printf("Token refreshed successfully for %s.\n", p.Name())
+
+		p.Config.AccessToken = resp.AccessToken
+		if resp.RefreshToken != "" {
+			p.Config.RefreshToken = resp.RefreshToken
+		}
+		if resp.ExpiresIn > 0 {
+			p.Config.Expiry = time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
+		}
+
+		if err := config.UpdateProvider(p.Config); err != nil {
+			return fmt.Errorf("failed to update config after refresh: %w", err)
+		}
+	}
+
 	return nil
 }
 
