@@ -50,13 +50,13 @@ type AntigravityConfig struct {
 }
 
 var (
-	cfgFile string
+	CfgFile string
 	Current Config
 )
 
 func InitConfig() {
-	if cfgFile != "" {
-		viper.SetConfigFile(cfgFile)
+	if CfgFile != "" {
+		viper.SetConfigFile(CfgFile)
 	} else {
 		home, err := os.UserHomeDir()
 		if err != nil {

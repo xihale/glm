@@ -9,8 +9,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var cfgFile string
-
 var rootCmd = &cobra.Command{
 	Use:   "ai-daemon",
 	Short: "A system-level daemon for AI service quota management",
@@ -31,5 +29,5 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(config.InitConfig)
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/ai-daemon/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&config.CfgFile, "config", "", "config file (default is $HOME/.config/ai-daemon/config.yaml)")
 }
