@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 )
 
@@ -79,7 +80,10 @@ func InitConfig() {
 	if err := viper.ReadInConfig(); err == nil {
 	}
 
-	if err := viper.Unmarshal(&Current); err != nil {
+	if err := viper.Unmarshal(&Current, func(c *mapstructure.DecoderConfig) {
+		c.TagName = "mapstructure"
+		c.DecodeHook = mapstructure.StringToTimeHookFunc(time.RFC3339)
+	}); err != nil {
 		fmt.Printf("Unable to decode into struct, %v", err)
 	}
 
