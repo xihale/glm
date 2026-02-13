@@ -6,17 +6,17 @@ import (
 	"strings"
 	"time"
 
-	"ai-daemon/pkg/config"
 	"ai-daemon/pkg/providers/antigravity"
+	"ai-daemon/pkg/providers/geminicli"
 	"ai-daemon/pkg/providers/glm"
+	"ai-daemon/pkg/providers/interfaces"
 
 	"github.com/spf13/cobra"
 )
 
 var monitorCmd = &cobra.Command{
-	Use:   "monitor [all|glm|antigravity]",
-	Short: "Monitor usage and quotas",
-	Args:  cobra.MaximumNArgs(1),
+	Use:   "monitor [all|glm|antigravity|cli]",
+	Short: "Monitor usage and quotas across all providers",
 	Run: func(cmd *cobra.Command, args []string) {
 		debug, _ := cmd.Flags().GetBool("debug")
 		target := "all"
@@ -24,119 +24,78 @@ var monitorCmd = &cobra.Command{
 			target = args[0]
 		}
 
-		fmt.Printf("\n🚀 AI-Daemon Quota Dashboard (%s)\n", time.Now().Format("2006-01-02 15:04:05"))
-		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Printf("\n\033[1;36m[*] AI-Daemon Quota Dashboard (%s)\033[0m\n", time.Now().Format("15:04:05"))
+		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
 
-		if target == "all" || target == "glm" {
-			displayGLM(debug)
+		registry := []interfaces.Provider{
+			glm.NewProvider(),
+			antigravity.NewProvider(),
+			geminicli.NewProvider(),
 		}
 
-		if target == "all" || target == "antigravity" {
-			displayAntigravity(debug)
+		for _, p := range registry {
+			if target != "all" && p.ID() != target {
+				if target == "cli" && p.ID() == "geminicli" {
+					// match
+				} else {
+					continue
+				}
+			}
+
+			fmt.Printf("\n\033[1m[ %s ]\033[0m\n", p.Name())
+			p.SetDebug(debug)
+
+			if err := p.Authenticate(); err != nil {
+				fmt.Printf("  \033[33m[!] %v\033[0m\n", err)
+				continue
+			}
+
+			quota, err := p.GetQuota()
+			if err != nil {
+				fmt.Printf("  \033[31m[-] Error: %v\033[0m\n", err)
+				continue
+			}
+
+			displayQuota(p.ID(), quota)
 		}
 		fmt.Println()
 	},
 }
 
-func displayGLM(debug bool) {
-	p := glm.NewProvider()
-	p.SetDebug(debug)
-	fmt.Printf("\n[GLM Coding Plan]\n")
-	if config.Current.GLM.APIKey == "" {
-		fmt.Println("  ⚠️  Not Configured")
-		return
-	}
-
-	if err := p.Authenticate(); err != nil {
-		fmt.Printf("  ❌ Auth Failed: %v\n", err)
-		return
-	}
-
-	quota, err := p.GetQuota()
-	if err != nil {
-		fmt.Printf("  ❌ Error: %v\n", err)
-		return
-	}
-
-	color := "\033[32m" // Green
-	if quota.Remaining < 20 {
-		color = "\033[31m" // Red
-	} else if quota.Remaining < 50 {
-		color = "\033[33m" // Yellow
-	}
-
-	fmt.Printf("  Quota: %s%d%%\033[0m Remaining  |  Used: %d%%\n", color, quota.Remaining, quota.Used)
-	if !quota.ResetTime.IsZero() {
-		fmt.Printf("  Next Reset: %s (%s remaining)\n", quota.ResetTime.Local().Format("2006-01-02 15:04:05"), formatTimeUntil(quota.ResetTime))
-	}
-}
-
-func displayAntigravity(debug bool) {
-	p := antigravity.NewProvider()
-	p.SetDebug(debug)
-	fmt.Printf("\n[Antigravity IDE]\n")
-
-	if err := p.Authenticate(); err != nil {
-		fmt.Printf("  ⚠️  %v\n", err)
-		return
-	}
-
-	quota, err := p.GetQuota()
-	if err != nil {
-		fmt.Printf("  ❌ Error: %v\n", err)
-		return
-	}
-
-	fmt.Printf("  Status: %s (Remote Mode)\n\n", quota.Type)
-
-	models := []struct {
-		Name  string
-		Label string
-	}{
-		{"gemini-3-flash", "Gemini 3 Flash"},
-		{"gemini-3-pro-low", "Gemini 3 Pro"},
-		{"claude-sonnet-4-5", "Claude Sonnet 4.5"},
-	}
-
-	fmt.Println("  [Antigravity Quota]")
-	for _, m := range models {
-		rem, reset := extractModelQuota(quota.Raw, m.Name)
+func displayQuota(id string, q *interfaces.QuotaStatus) {
+	switch id {
+	case "glm":
 		color := "\033[32m"
-		if rem < 20 {
-			color = "\033[31m"
-		} else if rem < 50 {
-			color = "\033[33m"
+		if q.Remaining < 20 { color = "\033[31m" }
+		fmt.Printf("  [+] Quota: %s%d%%\033[0m Remaining | Used: %d%%\n", color, q.Remaining, q.Used)
+	case "antigravity":
+		models := []struct{ID, Label string}{
+			{"gemini-3-flash", "Gemini 3 Flash"},
+			{"gemini-3-pro-low", "Gemini 3 Pro"},
+			{"claude-sonnet-4-5", "Claude Sonnet 4.5"},
 		}
-
-		fmt.Printf("    %-18s: %s%3.0f%%\033[0m", m.Label, color, rem)
-		if !reset.IsZero() {
-			fmt.Printf("  (%s / %s remaining)", reset.Local().Format("15:04"), formatTimeUntil(reset))
-		}
-		fmt.Println()
-	}
-
-	if quota.CliQuotaRaw != "" {
-		cliModels := extractCliQuota(quota.CliQuotaRaw)
-		if len(cliModels) > 0 {
-			fmt.Println("\n  [Gemini CLI Quota]")
-			for _, cm := range cliModels {
-				color := "\033[32m"
-				remainingPercent := cm.RemainingFraction * 100
-				if remainingPercent < 20 {
-					color = "\033[31m"
-				} else if remainingPercent < 50 {
-					color = "\033[33m"
-				}
-
-				fmt.Printf("    %-18s: %s%3.0f%%\033[0m", cm.ModelID, color, remainingPercent)
-				if cm.ResetTime != "" {
-					reset, _ := time.Parse(time.RFC3339, cm.ResetTime)
-					if !reset.IsZero() {
-						fmt.Printf("  (%s / %s remaining)", reset.Local().Format("15:04"), formatTimeUntil(reset))
-					}
-				}
-				fmt.Println()
+		for _, m := range models {
+			rem, reset := extractModelQuota(q.Raw, m.ID)
+			color := "\033[32m"
+			if rem < 20 { color = "\033[31m" }
+			fmt.Printf("    [+] %-18s: %s%3.0f%%\033[0m", m.Label, color, rem)
+			if !reset.IsZero() {
+				fmt.Printf("  (%s / %s left)", reset.Local().Format("15:04"), formatTimeUntil(reset))
 			}
+			fmt.Println()
+		}
+	case "geminicli":
+		cliModels := extractCliQuota(q.Raw)
+		for _, cm := range cliModels {
+			color := "\033[32m"
+			rem := cm.RemainingFraction * 100
+			if rem < 20 { color = "\033[31m" }
+			fmt.Printf("    [+] %-18s: %s%3.0f%%\033[0m", cm.ModelID, color, rem)
+			if cm.ResetTime != "" {
+				reset, _ := time.Parse(time.RFC3339, cm.ResetTime)
+				fmt.Printf("  (%s / %s left)", reset.Local().Format("15:04"), formatTimeUntil(reset))
+			}
+			fmt.Println()
 		}
 	}
 }
@@ -155,8 +114,6 @@ func formatTimeUntil(t time.Time) string {
 }
 
 func extractModelQuota(raw string, modelID string) (float64, time.Time) {
-	// Simple path extraction since we don't want to import heavy JSONPath libs
-	// We'll use the existing QuotaResponse struct but generic
 	var data struct {
 		Models map[string]struct {
 			QuotaInfo struct {
@@ -233,58 +190,7 @@ func extractCliQuota(raw string) []CliQuotaModel {
 	return result
 }
 
-func selectRepresentativeModel(models []string) string {
-	if len(models) == 0 {
-		return ""
-	}
-	if len(models) == 1 {
-		return models[0]
-	}
-
-	best := models[0]
-	bestScore := scoreModel(best)
-
-	for _, m := range models[1:] {
-		score := scoreModel(m)
-		if score > bestScore {
-			best = m
-			bestScore = score
-		}
-	}
-
-	return best
-}
-
-func scoreModel(modelID string) int {
-	score := 0
-
-	if strings.HasPrefix(modelID, "gemini-3-") {
-		score += 300
-	} else if strings.HasPrefix(modelID, "gemini-2.5-") {
-		score += 200
-	} else if strings.HasPrefix(modelID, "gemini-2.0-") {
-		score += 100
-	}
-
-	if strings.Contains(modelID, "-pro") {
-		score += 50
-	} else if strings.Contains(modelID, "-flash") {
-		score += 30
-	}
-
-	if strings.Contains(modelID, "preview") {
-		score += 10
-	}
-
-	if strings.Contains(modelID, "-lite") {
-		score -= 20
-	}
-
-	return score
-}
-
 func init() {
 	rootCmd.AddCommand(monitorCmd)
-	monitorCmd.Flags().Bool("heartbeat", false, "Send a heartbeat ping")
 	monitorCmd.Flags().Bool("debug", false, "Enable debug output")
 }

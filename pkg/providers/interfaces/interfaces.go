@@ -1,21 +1,24 @@
 package interfaces
 
-import "time"
+import (
+	"time"
+)
 
 type QuotaStatus struct {
-	Used        int64     `json:"used"`
-	Limit       int64     `json:"limit"`
-	Remaining   int64     `json:"remaining"`
-	ResetTime   time.Time `json:"reset_time"`
-	Type        string    `json:"type"`
-	Raw         string    `json:"-"`
-	CliQuotaRaw string    `json:"-"`
+	Used        int64
+	Limit       int64
+	Remaining   int64
+	ResetTime   time.Time
+	Type        string
+	Raw         string
+	CliQuotaRaw string // Deprecated: Moved to separate provider
 }
 
 type Provider interface {
 	Name() string
+	ID() string
 	Authenticate() error
 	GetQuota() (*QuotaStatus, error)
-	SendHeartbeat() error
-	SetDebug(bool)
+	Activate(debug bool, force bool) error
+	SetDebug(debug bool)
 }

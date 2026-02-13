@@ -35,13 +35,9 @@ func NewProvider() *Provider {
 	}
 }
 
-func (p *Provider) Name() string {
-	return "GLM-Coding-Plan"
-}
-
-func (p *Provider) SetDebug(d bool) {
-	p.Debug = d
-}
+func (p *Provider) Name() string { return "GLM Coding Plan" }
+func (p *Provider) ID() string   { return "glm" }
+func (p *Provider) SetDebug(d bool) { p.Debug = d }
 
 func (p *Provider) Authenticate() error {
 	p.APIKey = config.Current.GLM.APIKey
@@ -70,46 +66,21 @@ type quotaResponse struct {
 
 func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 	req, err := http.NewRequest("GET", p.BaseURL+QuotaEndpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-
+	if err != nil { return nil, err }
 	p.setHeaders(req)
 
-	if p.Debug {
-		fmt.Printf("DEBUG: GLM Quota Headers: %v\n", req.Header)
-		fmt.Printf("DEBUG: Requesting %s\n", p.BaseURL+QuotaEndpoint)
-	}
 	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if p.Debug {
-		fmt.Printf("DEBUG: GLM Quota Status: %d\n", resp.StatusCode)
-		fmt.Printf("DEBUG: GLM Quota Response: %s\n", string(body))
-	}
-
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("quota request failed (%d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("quota failed: %d", resp.StatusCode)
 	}
 
 	var qResp quotaResponse
 	if err := json.Unmarshal(body, &qResp); err != nil {
-		return &interfaces.QuotaStatus{
-			Type: "glm_json_error",
-			Raw:  string(body),
-		}, nil
-	}
-
-	if qResp.Code != 200 {
-		return nil, fmt.Errorf("API Error: %s (Code: %d)", qResp.Msg, qResp.Code)
+		return &interfaces.QuotaStatus{Type: "glm_json_error", Raw: string(body)}, nil
 	}
 
 	var used int64
@@ -117,11 +88,8 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 	var resetTime time.Time
 	var found bool
 
-	// 1. Try to find TOKENS_LIMIT (Rolling 5-hour window)
 	for _, l := range qResp.Data.Limits {
 		if l.Type == "TOKENS_LIMIT" {
-			// percentage is used as an int in my interfaces.QuotaStatus for now,
-			// let's stick to percentage reported by server.
 			used = int64(l.Percentage)
 			remaining = 100 - used
 			if l.NextResetTime > 0 {
@@ -132,7 +100,6 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 		}
 	}
 
-	// 2. Fallback to TIME_LIMIT if TOKENS_LIMIT not found
 	if !found {
 		for _, l := range qResp.Data.Limits {
 			if l.Type == "TIME_LIMIT" {
@@ -156,37 +123,32 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 	}, nil
 }
 
+func (p *Provider) Activate(debug bool, force bool) error {
+	fmt.Printf("  [*] Sending Heartbeat ... ")
+	err := p.SendHeartbeat()
+	if err != nil {
+		fmt.Printf("\033[31m[-] %v\033[0m\n", err)
+	} else {
+		fmt.Printf("\033[32m[+] Success\033[0m\n")
+	}
+	return nil
+}
+
 func (p *Provider) SendHeartbeat() error {
 	payload := map[string]interface{}{
 		"model":      "glm-4.7",
 		"messages":   []map[string]string{{"role": "user", "content": "ping"}},
 		"max_tokens": 5,
 	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequest("POST", p.BaseURL+HeartbeatEndpoint, bytes.NewBuffer(body))
-	if err != nil {
-		return err
-	}
-
+	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", p.BaseURL+HeartbeatEndpoint, bytes.NewBuffer(body))
 	p.setHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.Client.Do(req)
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("heartbeat failed: %s", string(respBody))
-	}
-
+	if resp.StatusCode != http.StatusOK { return fmt.Errorf("status %d", resp.StatusCode) }
 	return nil
 }
 
