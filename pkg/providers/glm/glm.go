@@ -157,7 +157,7 @@ func (p *Provider) Activate(debug bool, force bool) error {
 	quota, err := p.GetQuota()
 	if err == nil && !force {
 		timeUntil := time.Until(quota.ResetTime)
-		if quota.Remaining > 10 || (!quota.ResetTime.IsZero() && timeUntil > 0 && timeUntil < (4*time.Hour+59*time.Minute)) {
+		if !quota.ResetTime.IsZero() && timeUntil > 5*time.Hour && quota.Remaining > 10 {
 			q := pkgutils.ModelQuota{Remaining: float64(quota.Remaining), ResetTime: quota.ResetTime}
 			pkgutils.PrintSkipMessage("General", q)
 			return nil
