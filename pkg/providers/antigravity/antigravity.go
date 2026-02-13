@@ -203,10 +203,10 @@ func (p *Provider) Activate(debug bool, force bool) error {
 		}
 
 		timeUntil := time.Until(info.ResetTime)
-
 		if !force {
-			if info.Remaining > 10 || (!info.ResetTime.IsZero() && timeUntil > 0 && timeUntil < (4*time.Hour+59*time.Minute)) {
+			if !info.ResetTime.IsZero() && timeUntil > 5*time.Hour && info.Remaining > 10 {
 				pkgutils.PrintSkipMessage(g.Label, info)
+
 				continue
 			}
 		}
