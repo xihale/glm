@@ -19,6 +19,7 @@ type Provider struct {
 	Client      *http.Client
 	Debug       bool
 	TargetGroup string
+	Config      config.ProviderConfig
 }
 
 func NewProvider() *Provider {
@@ -27,21 +28,55 @@ func NewProvider() *Provider {
 	}
 }
 
-func (p *Provider) Name() string          { return "Antigravity IDE" }
-func (p *Provider) ID() string            { return "antigravity" }
+func NewProviderWithConfig(cfg config.ProviderConfig) *Provider {
+	return &Provider{
+		Client: &http.Client{Timeout: 60 * time.Second},
+		Config: cfg,
+	}
+}
+
+func (p *Provider) Name() string {
+	name := "Antigravity IDE"
+	if p.Config.Name != "" {
+		name = fmt.Sprintf("%s (%s)", name, p.Config.Name)
+	}
+	return name
+}
+
+func (p *Provider) ID() string {
+	id := "antigravity"
+	if p.Config.Name != "" {
+		id = fmt.Sprintf("%s_%s", id, p.Config.Name)
+	}
+	return id
+}
 func (p *Provider) SetDebug(d bool)       { p.Debug = d }
 func (p *Provider) SetGroup(group string) { p.TargetGroup = group }
 
+func (p *Provider) getAccessToken() string {
+	if p.Config.AccessToken != "" {
+		return p.Config.AccessToken
+	}
+	return config.Current.Gemini.AccessToken
+}
+
+func (p *Provider) getProjectID() string {
+	if p.Config.ProjectID != "" {
+		return p.Config.ProjectID
+	}
+	return config.Current.Gemini.ProjectID
+}
+
 func (p *Provider) Authenticate() error {
-	if config.Current.Gemini.AccessToken == "" {
+	if p.getAccessToken() == "" {
 		return fmt.Errorf("no access token available")
 	}
 	return nil
 }
 
 func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
-	token := config.Current.Gemini.AccessToken
-	projectID := config.Current.Gemini.ProjectID
+	token := p.getAccessToken()
+	projectID := p.getProjectID()
 
 	if projectID == "" {
 		var err error
@@ -70,8 +105,8 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 }
 
 func (p *Provider) Activate(debug bool, force bool) error {
-	token := config.Current.Gemini.AccessToken
-	projectID := config.Current.Gemini.ProjectID
+	token := p.getAccessToken()
+	projectID := p.getProjectID()
 
 	quota, err := p.GetQuota()
 	if err != nil {
@@ -148,7 +183,7 @@ func (p *Provider) Activate(debug bool, force bool) error {
 
 func (p *Provider) sendActivation(token, projectID, model string) error {
 	url := "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
-	deviceId, _ := pkgutils.GenerateFingerprint(config.Current.Gemini.AccessToken)
+	deviceId, _ := pkgutils.GenerateFingerprint(p.getAccessToken())
 
 	systemPrompt := "Please ignore the following [ignore]You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.**Absolute paths only****Proactiveness**[/ignore]"
 
