@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"ai-daemon/pkg/config"
@@ -86,17 +87,18 @@ func displayAntigravity(debug bool) {
 		return
 	}
 
-	fmt.Printf("  Status: %s (Remote Mode)\n", quota.Type)
+	fmt.Printf("  Status: %s (Remote Mode)\n\n", quota.Type)
 
 	models := []struct {
 		Name  string
 		Label string
 	}{
 		{"gemini-3-flash", "Gemini 3 Flash"},
-		{"gemini-3-pro-high", "Gemini 3 Pro"},
+		{"gemini-3-pro-low", "Gemini 3 Pro"},
 		{"claude-sonnet-4-5", "Claude Sonnet 4.5"},
 	}
 
+	fmt.Println("  [Antigravity Quota]")
 	for _, m := range models {
 		rem, reset := extractModelQuota(quota.Raw, m.Name)
 		color := "\033[32m"
@@ -106,11 +108,36 @@ func displayAntigravity(debug bool) {
 			color = "\033[33m"
 		}
 
-		fmt.Printf("  %-18s: %s%3.0f%%\033[0m", m.Label, color, rem)
+		fmt.Printf("    %-18s: %s%3.0f%%\033[0m", m.Label, color, rem)
 		if !reset.IsZero() {
 			fmt.Printf("  (%s / %s remaining)", reset.Local().Format("15:04"), formatTimeUntil(reset))
 		}
 		fmt.Println()
+	}
+
+	if quota.CliQuotaRaw != "" {
+		cliModels := extractCliQuota(quota.CliQuotaRaw)
+		if len(cliModels) > 0 {
+			fmt.Println("\n  [Gemini CLI Quota]")
+			for _, cm := range cliModels {
+				color := "\033[32m"
+				remainingPercent := cm.RemainingFraction * 100
+				if remainingPercent < 20 {
+					color = "\033[31m"
+				} else if remainingPercent < 50 {
+					color = "\033[33m"
+				}
+
+				fmt.Printf("    %-18s: %s%3.0f%%\033[0m", cm.ModelID, color, remainingPercent)
+				if cm.ResetTime != "" {
+					reset, _ := time.Parse(time.RFC3339, cm.ResetTime)
+					if !reset.IsZero() {
+						fmt.Printf("  (%s / %s remaining)", reset.Local().Format("15:04"), formatTimeUntil(reset))
+					}
+				}
+				fmt.Println()
+			}
+		}
 	}
 }
 
@@ -147,7 +174,113 @@ func extractModelQuota(raw string, modelID string) (float64, time.Time) {
 		reset, _ := time.Parse(time.RFC3339, m.QuotaInfo.ResetTime)
 		return m.QuotaInfo.RemainingFraction * 100, reset
 	}
-	return 100, time.Time{} // Default to 100 if not found
+	return 0, time.Time{}
+}
+
+type CliQuotaModel struct {
+	ModelID           string
+	RemainingFraction float64
+	ResetTime         string
+}
+
+func extractCliQuota(raw string) []CliQuotaModel {
+	var data struct {
+		Buckets []struct {
+			RemainingFraction float64 `json:"remainingFraction"`
+			ResetTime         string  `json:"resetTime"`
+			ModelID           string  `json:"modelId"`
+		} `json:"buckets"`
+	}
+
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		return nil
+	}
+
+	type modelGroup struct {
+		quota     float64
+		resetTime string
+		models    []string
+	}
+
+	groups := make(map[string]*modelGroup)
+
+	for _, b := range data.Buckets {
+		if b.ModelID == "" || strings.HasSuffix(b.ModelID, "_vertex") {
+			continue
+		}
+
+		key := fmt.Sprintf("%.2f-%s", b.RemainingFraction, b.ResetTime)
+		if _, exists := groups[key]; !exists {
+			groups[key] = &modelGroup{
+				quota:     b.RemainingFraction,
+				resetTime: b.ResetTime,
+				models:    []string{},
+			}
+		}
+		groups[key].models = append(groups[key].models, b.ModelID)
+	}
+
+	var result []CliQuotaModel
+	for _, group := range groups {
+		representative := selectRepresentativeModel(group.models)
+		result = append(result, CliQuotaModel{
+			ModelID:           representative,
+			RemainingFraction: group.quota,
+			ResetTime:         group.resetTime,
+		})
+	}
+
+	return result
+}
+
+func selectRepresentativeModel(models []string) string {
+	if len(models) == 0 {
+		return ""
+	}
+	if len(models) == 1 {
+		return models[0]
+	}
+
+	best := models[0]
+	bestScore := scoreModel(best)
+
+	for _, m := range models[1:] {
+		score := scoreModel(m)
+		if score > bestScore {
+			best = m
+			bestScore = score
+		}
+	}
+
+	return best
+}
+
+func scoreModel(modelID string) int {
+	score := 0
+
+	if strings.HasPrefix(modelID, "gemini-3-") {
+		score += 300
+	} else if strings.HasPrefix(modelID, "gemini-2.5-") {
+		score += 200
+	} else if strings.HasPrefix(modelID, "gemini-2.0-") {
+		score += 100
+	}
+
+	if strings.Contains(modelID, "-pro") {
+		score += 50
+	} else if strings.Contains(modelID, "-flash") {
+		score += 30
+	}
+
+	if strings.Contains(modelID, "preview") {
+		score += 10
+	}
+
+	if strings.Contains(modelID, "-lite") {
+		score -= 20
+	}
+
+	return score
 }
 
 func init() {
