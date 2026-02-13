@@ -10,6 +10,7 @@ import (
 
 	"ai-daemon/pkg/config"
 	"ai-daemon/pkg/providers/interfaces"
+	pkgutils "ai-daemon/pkg/utils"
 )
 
 const (
@@ -124,8 +125,20 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 }
 
 func (p *Provider) Activate(debug bool, force bool) error {
-	fmt.Printf("  [*] Sending Heartbeat ... ")
-	err := p.SendHeartbeat()
+	// Check current quota/reset time
+	quota, err := p.GetQuota()
+	if err == nil {
+		timeUntil := time.Until(quota.ResetTime)
+		// Apply same logic: skip if already significantly active
+		if !force && !quota.ResetTime.IsZero() && timeUntil > 0 && timeUntil < (4*time.Hour+59*time.Minute) {
+			fmt.Printf("  [*] Activating %-18s ... \033[33mSkipped\033[0m (%s left)\n", 
+				"GLM Heartbeat", pkgutils.FormatTimeUntil(quota.ResetTime))
+			return nil
+		}
+	}
+
+	fmt.Printf("  [*] Activating %-18s ... ", "GLM Heartbeat")
+	err = p.SendHeartbeat()
 	if err != nil {
 		fmt.Printf("\033[31m[-] %v\033[0m\n", err)
 	} else {

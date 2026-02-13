@@ -1,28 +1,26 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"strings"
+	"sync"
 	"time"
 
 	"ai-daemon/pkg/providers/antigravity"
 	"ai-daemon/pkg/providers/geminicli"
 	"ai-daemon/pkg/providers/glm"
 	"ai-daemon/pkg/providers/interfaces"
+	"ai-daemon/pkg/utils"
 
 	"github.com/spf13/cobra"
 )
 
 var monitorCmd = &cobra.Command{
-	Use:   "monitor [all|glm|antigravity|cli]",
-	Short: "Monitor usage and quotas across all providers",
+	Use:       "monitor [provider1 provider2 ...]",
+	Short:     "Monitor usage and quotas across all providers",
+	ValidArgs: []string{"glm", "antigravity", "geminicli", "all"},
 	Run: func(cmd *cobra.Command, args []string) {
-		debug, _ := cmd.Flags().GetBool("debug")
-		target := "all"
-		if len(args) > 0 {
-			target = args[0]
-		}
+		targets := make(map[string]bool)
+		for _, arg := range args { targets[arg] = true }
 
 		fmt.Printf("\n\033[1;36m[*] AI-Daemon Quota Dashboard (%s)\033[0m\n", time.Now().Format("15:04:05"))
 		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
@@ -33,32 +31,44 @@ var monitorCmd = &cobra.Command{
 			geminicli.NewProvider(),
 		}
 
-		for _, p := range registry {
-			if target != "all" && p.ID() != target {
-				if target == "cli" && p.ID() == "geminicli" {
-					// match
-				} else {
-					continue
-				}
-			}
-
-			fmt.Printf("\n\033[1m[ %s ]\033[0m\n", p.Name())
-			p.SetDebug(debug)
-
-			if err := p.Authenticate(); err != nil {
-				fmt.Printf("  \033[33m[!] %v\033[0m\n", err)
-				continue
-			}
-
-			quota, err := p.GetQuota()
-			if err != nil {
-				fmt.Printf("  \033[31m[-] Error: %v\033[0m\n", err)
-				continue
-			}
-
-			displayQuota(p.ID(), quota)
+		type result struct {
+			p     interfaces.Provider
+			quota *interfaces.QuotaStatus
+			err   error
 		}
-		fmt.Println()
+		results := make([]result, len(registry))
+		var wg sync.WaitGroup
+
+		for i, p := range registry {
+			if len(args) > 0 && !targets["all"] && !targets[p.ID()] {
+				continue
+			}
+
+			wg.Add(1)
+			go func(idx int, prov interfaces.Provider) {
+				defer wg.Done()
+				if err := prov.Authenticate(); err != nil {
+					results[idx] = result{p: prov, err: err}
+					return
+				}
+				q, err := prov.GetQuota()
+				results[idx] = result{p: prov, quota: q, err: err}
+			}(i, p)
+		}
+
+		wg.Wait()
+
+		for _, res := range results {
+			if res.p == nil { continue }
+			fmt.Printf("\033[1;35m[ %s ]\033[0m\n", res.p.Name())
+			if res.err != nil {
+				fmt.Printf("  \033[33m[!] %v\033[0m\n", res.err)
+				fmt.Println()
+				continue
+			}
+			displayQuota(res.p.ID(), res.quota)
+			fmt.Println()
+		}
 	},
 }
 
@@ -67,127 +77,42 @@ func displayQuota(id string, q *interfaces.QuotaStatus) {
 	case "glm":
 		color := "\033[32m"
 		if q.Remaining < 20 { color = "\033[31m" }
-		fmt.Printf("  [+] Quota: %s%d%%\033[0m Remaining | Used: %d%%\n", color, q.Remaining, q.Used)
+		fmt.Printf("  \033[32m[+]\033[0m Quota: %s%d%%\033[0m Remaining | Used: %d%%\n", color, q.Remaining, q.Used)
+		if !q.ResetTime.IsZero() {
+			fmt.Printf("  \033[34m[*]\033[0m Next Reset: %s (%s left)\n", 
+				q.ResetTime.Local().Format("15:04:05"), utils.FormatTimeUntil(q.ResetTime))
+		}
 	case "antigravity":
+		modelMap := utils.ExtractAllModelQuotas(q.Raw)
 		models := []struct{ID, Label string}{
 			{"gemini-3-flash", "Gemini 3 Flash"},
 			{"gemini-3-pro-low", "Gemini 3 Pro"},
 			{"claude-sonnet-4-5", "Claude Sonnet 4.5"},
 		}
 		for _, m := range models {
-			rem, reset := extractModelQuota(q.Raw, m.ID)
+			info, ok := modelMap[m.ID]
+			if !ok { continue }
 			color := "\033[32m"
-			if rem < 20 { color = "\033[31m" }
-			fmt.Printf("    [+] %-18s: %s%3.0f%%\033[0m", m.Label, color, rem)
-			if !reset.IsZero() {
-				fmt.Printf("  (%s / %s left)", reset.Local().Format("15:04"), formatTimeUntil(reset))
+			if info.Remaining < 20 { color = "\033[31m" }
+			fmt.Printf("  \033[32m[+]\033[0m %-18s: %s%3.0f%%\033[0m", m.Label, color, info.Remaining)
+			if !info.ResetTime.IsZero() {
+				fmt.Printf("  (%s / %s left)", info.ResetTime.Local().Format("15:04"), utils.FormatTimeUntil(info.ResetTime))
 			}
 			fmt.Println()
 		}
 	case "geminicli":
-		cliModels := extractCliQuota(q.Raw)
-		for _, cm := range cliModels {
+		cliMap := utils.ExtractAllCliQuotas(q.Raw)
+		// To maintain order or just iterate
+		for name, info := range cliMap {
 			color := "\033[32m"
-			rem := cm.RemainingFraction * 100
-			if rem < 20 { color = "\033[31m" }
-			fmt.Printf("    [+] %-18s: %s%3.0f%%\033[0m", cm.ModelID, color, rem)
-			if cm.ResetTime != "" {
-				reset, _ := time.Parse(time.RFC3339, cm.ResetTime)
-				fmt.Printf("  (%s / %s left)", reset.Local().Format("15:04"), formatTimeUntil(reset))
+			if info.Remaining < 20 { color = "\033[31m" }
+			fmt.Printf("  \033[32m[+]\033[0m %-25s: %s%3.0f%%\033[0m", name, color, info.Remaining)
+			if !info.ResetTime.IsZero() {
+				fmt.Printf("  (%s / %s left)", info.ResetTime.Local().Format("15:04"), utils.FormatTimeUntil(info.ResetTime))
 			}
 			fmt.Println()
 		}
 	}
-}
-
-func formatTimeUntil(t time.Time) string {
-	d := time.Until(t)
-	if d < 0 {
-		return "Soon"
-	}
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	if h > 0 {
-		return fmt.Sprintf("%dh %dm", h, m)
-	}
-	return fmt.Sprintf("%dm", m)
-}
-
-func extractModelQuota(raw string, modelID string) (float64, time.Time) {
-	var data struct {
-		Models map[string]struct {
-			QuotaInfo struct {
-				RemainingFraction float64 `json:"remainingFraction"`
-				ResetTime         string  `json:"resetTime"`
-			} `json:"quotaInfo"`
-		} `json:"models"`
-	}
-
-	if err := json.Unmarshal([]byte(raw), &data); err != nil {
-		return 0, time.Time{}
-	}
-
-	if m, ok := data.Models[modelID]; ok {
-		reset, _ := time.Parse(time.RFC3339, m.QuotaInfo.ResetTime)
-		return m.QuotaInfo.RemainingFraction * 100, reset
-	}
-	return 0, time.Time{}
-}
-
-type CliQuotaModel struct {
-	ModelID           string
-	RemainingFraction float64
-	ResetTime         string
-}
-
-func extractCliQuota(raw string) []CliQuotaModel {
-	var data struct {
-		Buckets []struct {
-			RemainingFraction float64 `json:"remainingFraction"`
-			ResetTime         string  `json:"resetTime"`
-			ModelID           string  `json:"modelId"`
-		} `json:"buckets"`
-	}
-
-	if err := json.Unmarshal([]byte(raw), &data); err != nil {
-		return nil
-	}
-
-	type modelGroup struct {
-		quota     float64
-		resetTime string
-		models    []string
-	}
-
-	groups := make(map[string]*modelGroup)
-
-	for _, b := range data.Buckets {
-		if b.ModelID == "" || strings.HasSuffix(b.ModelID, "_vertex") {
-			continue
-		}
-
-		key := fmt.Sprintf("%.2f-%s", b.RemainingFraction, b.ResetTime)
-		if _, exists := groups[key]; !exists {
-			groups[key] = &modelGroup{
-				quota:     b.RemainingFraction,
-				resetTime: b.ResetTime,
-				models:    []string{},
-			}
-		}
-		groups[key].models = append(groups[key].models, b.ModelID)
-	}
-
-	var result []CliQuotaModel
-	for _, group := range groups {
-		representative := selectRepresentativeModel(group.models)
-		result = append(result, CliQuotaModel{
-			ModelID:           representative,
-			RemainingFraction: group.quota,
-			ResetTime:         group.resetTime,
-		})
-	}
-
-	return result
 }
 
 func init() {
