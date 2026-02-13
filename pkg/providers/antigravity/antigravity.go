@@ -36,11 +36,10 @@ func NewProviderWithConfig(cfg config.ProviderConfig) *Provider {
 }
 
 func (p *Provider) Name() string {
-	name := "Antigravity IDE"
 	if p.Config.Name != "" {
-		name = fmt.Sprintf("%s (%s)", name, p.Config.Name)
+		return fmt.Sprintf("[Antigravity - %s]", p.Config.Name)
 	}
-	return name
+	return "[Antigravity]"
 }
 
 func (p *Provider) ID() string {

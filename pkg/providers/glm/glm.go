@@ -48,13 +48,13 @@ func NewProviderWithConfig(cfg config.ProviderConfig) *Provider {
 
 func (p *Provider) Name() string {
 	if p.Config.Name != "" {
-		return "GLM Coding Plan (" + p.Config.Name + ")"
+		return "[GLM - " + p.Config.Name + "]"
 	}
-	return "GLM Coding Plan"
+	return "[GLM]"
 }
 func (p *Provider) ID() string {
 	if p.Config.Name != "" {
-		return p.Config.Name
+		return "glm_" + p.Config.Name
 	}
 	return "glm"
 }
