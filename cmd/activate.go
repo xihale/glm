@@ -49,7 +49,7 @@ var activateCmd = &cobra.Command{
 				continue
 			}
 
-			fmt.Printf("\033[1m[ %s ]\033[0m\n", p.Name())
+			fmt.Printf("\033[1m%s\033[0m\n", p.Name())
 			p.SetDebug(debug)
 			// Pass group filter to providers that support it
 			if ap, ok := p.(interface{ SetGroup(string) }); ok {

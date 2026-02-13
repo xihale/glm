@@ -77,26 +77,7 @@ var monitorCmd = &cobra.Command{
 				continue
 			}
 
-			header := res.p.Name()
-			id := res.p.ID()
-			if strings.HasPrefix(id, "glm") {
-				header = "[GLM Coding Plan]"
-				if id != "glm" {
-					header = fmt.Sprintf("[GLM Coding Plan] (%s)", id)
-				}
-			} else if strings.HasPrefix(id, "antigravity") {
-				header = "[Antigravity]"
-				if id != "antigravity" {
-					header = fmt.Sprintf("[Antigravity] (%s)", id)
-				}
-			} else if strings.HasPrefix(id, "geminicli") {
-				header = "[Gemini CLI]"
-				if id != "geminicli" {
-					header = fmt.Sprintf("[Gemini CLI] (%s)", id)
-				}
-			}
-
-			fmt.Printf("\033[1;35m%s\033[0m\n", header)
+			fmt.Printf("\033[1;35m%s\033[0m\n", res.p.Name())
 			if res.err != nil {
 				fmt.Printf("  \033[33m[!] %v\033[0m\n", res.err)
 				fmt.Println()
