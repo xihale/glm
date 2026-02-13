@@ -107,14 +107,33 @@ func GenerateFingerprint(email string) (string, string) {
 func FormatTimeUntil(t time.Time) string {
 	d := time.Until(t)
 	if d < 0 {
-		return "Soon"
+		return "Passed"
 	}
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
 	if h > 0 {
 		return fmt.Sprintf("%dh %dm", h, m)
 	}
-	return fmt.Sprintf("%dm", m)
+	if m > 0 {
+		return fmt.Sprintf("%dm", m)
+	}
+	return "0m"
+}
+
+func ShouldSkipActivation(remaining float64, resetTime time.Time, force bool) bool {
+	if force {
+		return false
+	}
+	if resetTime.IsZero() {
+		return false
+	}
+	timeUntil := time.Until(resetTime)
+	// Never skip if the reset time has passed or is very soon (less than 1 min)
+	if timeUntil < 1*time.Minute {
+		return false
+	}
+	// Only skip if we have > 10% remaining AND it won't reset for at least 5 hours
+	return remaining > 10 && timeUntil > 5*time.Hour
 }
 
 func SelectRepresentativeModel(models []string) string {
@@ -191,9 +210,6 @@ func FormatActivationError(err error, debug bool) {
 
 func PrintSkipMessage(label string, info ModelQuota) {
 	timeStr := FormatTimeUntil(info.ResetTime)
-	if timeStr == "Soon" {
-		timeStr = "0m"
-	}
 
 	fmt.Printf("  [*] Activating %-25s ... \033[33mSkipped\033[0m (%3.0f%%, %s)\n",
 		label, info.Remaining, timeStr)
