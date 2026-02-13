@@ -46,12 +46,19 @@ func LoadProvidersFromConfig() []interfaces.Provider {
 			p = antigravity.NewProviderWithConfig(pCfg)
 		case "geminicli", "gemini":
 			p = geminicli.NewProviderWithConfig(pCfg)
+			registry = append(registry, p)
+			if !pCfg.DisableAntigravity {
+				registry = append(registry, antigravity.NewProviderWithConfig(pCfg))
+			}
+			continue
 		default:
 			fmt.Printf("Warning: Unknown provider type '%s' for provider '%s'\n", pCfg.Type, pCfg.Name)
 			continue
 		}
 
-		registry = append(registry, p)
+		if p != nil {
+			registry = append(registry, p)
+		}
 	}
 
 	return registry

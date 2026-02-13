@@ -18,18 +18,19 @@ type Config struct {
 }
 
 type ProviderConfig struct {
-	Name          string                 `mapstructure:"name" json:"name" yaml:"name"`
-	Type          string                 `mapstructure:"type" json:"type" yaml:"type"`
-	APIKey        string                 `mapstructure:"api_key" json:"api_key,omitempty" yaml:"api_key,omitempty"`
-	BaseURL       string                 `mapstructure:"base_url" json:"base_url,omitempty" yaml:"base_url,omitempty"`
-	Enabled       bool                   `mapstructure:"enabled" json:"enabled,omitempty" yaml:"enabled,omitempty"`
-	Secure1PSID   string                 `mapstructure:"secure_1psid" json:"secure_1psid,omitempty" yaml:"secure_1psid,omitempty"`
-	Secure1PSIDTS string                 `mapstructure:"secure_1psidts" json:"secure_1psidts,omitempty" yaml:"secure_1psidts,omitempty"`
-	AccessToken   string                 `mapstructure:"access_token" json:"access_token,omitempty" yaml:"access_token,omitempty"`
-	RefreshToken  string                 `mapstructure:"refresh_token" json:"refresh_token,omitempty" yaml:"refresh_token,omitempty"`
-	ProjectID     string                 `mapstructure:"project_id" json:"project_id,omitempty" yaml:"project_id,omitempty"`
-	Expiry        time.Time              `mapstructure:"expiry" json:"expiry,omitempty" yaml:"expiry,omitempty"`
-	Extra         map[string]interface{} `mapstructure:",remain" json:"-" yaml:"-"`
+	Name               string                 `mapstructure:"name" json:"name" yaml:"name"`
+	Type               string                 `mapstructure:"type" json:"type" yaml:"type"`
+	APIKey             string                 `mapstructure:"api_key" json:"api_key,omitempty" yaml:"api_key,omitempty"`
+	BaseURL            string                 `mapstructure:"base_url" json:"base_url,omitempty" yaml:"base_url,omitempty"`
+	Enabled            bool                   `mapstructure:"enabled" json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	Secure1PSID        string                 `mapstructure:"secure_1psid" json:"secure_1psid,omitempty" yaml:"secure_1psid,omitempty"`
+	Secure1PSIDTS      string                 `mapstructure:"secure_1psidts" json:"secure_1psidts,omitempty" yaml:"secure_1psidts,omitempty"`
+	AccessToken        string                 `mapstructure:"access_token" json:"access_token,omitempty" yaml:"access_token,omitempty"`
+	RefreshToken       string                 `mapstructure:"refresh_token" json:"refresh_token,omitempty" yaml:"refresh_token,omitempty"`
+	ProjectID          string                 `mapstructure:"project_id" json:"project_id,omitempty" yaml:"project_id,omitempty"`
+	Expiry             time.Time              `mapstructure:"expiry" json:"expiry,omitempty" yaml:"expiry,omitempty"`
+	DisableAntigravity bool                   `mapstructure:"disable_antigravity" json:"disable_antigravity,omitempty" yaml:"disable_antigravity,omitempty"`
+	Extra              map[string]interface{} `mapstructure:",remain" json:"-" yaml:"-"`
 }
 
 type GLMConfig struct {
