@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ai-daemon/internal/utils"
@@ -70,12 +71,12 @@ func runDaemonOneShot() {
 		}
 
 		var modelResets map[string]pkgutils.ModelQuota
-		switch p.ID() {
-		case "antigravity":
+		id := p.ID()
+		if strings.HasPrefix(id, "antigravity") {
 			modelResets = pkgutils.ExtractAllModelQuotas(quota.Raw)
-		case "geminicli":
+		} else if strings.HasPrefix(id, "geminicli") {
 			modelResets = pkgutils.ExtractAllCliQuotas(quota.Raw)
-		default:
+		} else {
 			if !quota.ResetTime.IsZero() && quota.ResetTime.After(now) {
 				if earliestReset.IsZero() || quota.ResetTime.Before(earliestReset) {
 					earliestReset = quota.ResetTime

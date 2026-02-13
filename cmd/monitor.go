@@ -16,11 +16,14 @@ import (
 var monitorCmd = &cobra.Command{
 	Use:       "monitor [provider1 provider2 ...]",
 	Short:     "Monitor usage and quotas across all providers",
-	ValidArgs: []string{"glm", "antigravity", "geminicli", "all"},
+	ValidArgs: []string{"glm", "antigravity", "geminicli", "gemini", "all"},
 	Run: func(cmd *cobra.Command, args []string) {
 		targets := make(map[string]bool)
 		for _, arg := range args {
 			targets[arg] = true
+			if arg == "gemini" {
+				targets["geminicli"] = true
+			}
 		}
 
 		fmt.Printf("\n\033[1;36mAI-Daemon Quota Dashboard (%s)\033[0m\n", time.Now().Format("15:04:05"))
