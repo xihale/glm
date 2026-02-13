@@ -46,23 +46,20 @@ var migrateCmd = &cobra.Command{
 		if config.Current.Gemini.AccessToken != "" {
 			if m, ok := migrateProvider(reader, "Legacy Gemini", "legacy-gemini", func(name string) config.ProviderConfig {
 				pType := "gemini"
-				if config.Current.Antigravity.Enabled {
-					if promptYesNo(reader, "Antigravity is enabled. Use type 'antigravity'?", true) {
-						pType = "antigravity"
-					}
-				}
+				disableAntigravity := !promptYesNo(reader, "Enable Antigravity support?", true)
 				fmt.Println("Tokens (Access/Refresh/SID) will be migrated automatically.")
 				projectID := promptString(reader, "Project ID", config.Current.Gemini.ProjectID)
 				return config.ProviderConfig{
-					Name:          name,
-					Type:          pType,
-					AccessToken:   config.Current.Gemini.AccessToken,
-					RefreshToken:  config.Current.Gemini.RefreshToken,
-					ProjectID:     projectID,
-					Expiry:        config.Current.Gemini.Expiry,
-					Secure1PSID:   config.Current.Gemini.Secure1PSID,
-					Secure1PSIDTS: config.Current.Gemini.Secure1PSIDTS,
-					Enabled:       true,
+					Name:               name,
+					Type:               pType,
+					AccessToken:        config.Current.Gemini.AccessToken,
+					RefreshToken:       config.Current.Gemini.RefreshToken,
+					ProjectID:          projectID,
+					Expiry:             config.Current.Gemini.Expiry,
+					Secure1PSID:        config.Current.Gemini.Secure1PSID,
+					Secure1PSIDTS:      config.Current.Gemini.Secure1PSIDTS,
+					Enabled:            true,
+					DisableAntigravity: disableAntigravity,
 				}
 			}); ok {
 				config.Current.Providers = append(config.Current.Providers, m)
@@ -98,7 +95,7 @@ func migrateProvider(reader *bufio.Reader, label, defaultName string, createFunc
 
 	name := promptString(reader, "Enter name for this provider", defaultName)
 	provider := createFunc(name)
-	fmt.Printf("Added provider '%s' (type: %s)\n", provider.Name, provider.Type)
+	fmt.Printf("Added provider '%s' (type: %s, antigravity: %v)\n", provider.Name, provider.Type, !provider.DisableAntigravity)
 	return provider, true
 }
 

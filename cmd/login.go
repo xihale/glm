@@ -9,6 +9,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	noAntigravity bool
+)
+
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Log in to a provider (OAuth flow)",
@@ -31,8 +35,14 @@ var loginGeminiCmd = &cobra.Command{
 			fmt.Println("  [*] Target Account: Default (Global)")
 		}
 
+		if noAntigravity {
+			fmt.Println("  [*] Antigravity support: Disabled")
+		} else {
+			fmt.Println("  [*] Antigravity support: Enabled (default)")
+		}
+
 		fmt.Printf("  [*] Starting browser flow ... ")
-		if err := utils.LoginGemini(account); err != nil {
+		if err := utils.LoginGemini(account, noAntigravity); err != nil {
 			fmt.Printf("\033[31m[-] Failed: %v\033[0m\n", err)
 			os.Exit(1)
 		}
@@ -43,4 +53,6 @@ var loginGeminiCmd = &cobra.Command{
 func init() {
 	authCmd.AddCommand(loginCmd)
 	loginCmd.AddCommand(loginGeminiCmd)
+
+	loginGeminiCmd.Flags().BoolVar(&noAntigravity, "no-antigravity", false, "Disable Antigravity support for this account (Gemini CLI only)")
 }
