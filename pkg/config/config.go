@@ -148,3 +148,27 @@ func SaveConfig() error {
 
 	return nil
 }
+
+func UpdateProvider(cfg ProviderConfig) error {
+	if cfg.Name == "" {
+		Current.Gemini.AccessToken = cfg.AccessToken
+		Current.Gemini.RefreshToken = cfg.RefreshToken
+		Current.Gemini.Expiry = cfg.Expiry
+		Current.Gemini.ProjectID = cfg.ProjectID
+		viper.Set("gemini", Current.Gemini)
+	} else {
+		found := false
+		for i, p := range Current.Providers {
+			if p.Name == cfg.Name {
+				Current.Providers[i] = cfg
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("provider %s not found", cfg.Name)
+		}
+		viper.Set("providers", Current.Providers)
+	}
+	return SaveConfig()
+}
