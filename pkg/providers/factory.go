@@ -44,7 +44,7 @@ func LoadProvidersFromConfig() []interfaces.Provider {
 			p = glm.NewProviderWithConfig(pCfg)
 		case "antigravity":
 			p = antigravity.NewProviderWithConfig(pCfg)
-		case "geminicli":
+		case "geminicli", "gemini":
 			p = geminicli.NewProviderWithConfig(pCfg)
 		default:
 			fmt.Printf("Warning: Unknown provider type '%s' for provider '%s'\n", pCfg.Type, pCfg.Name)
