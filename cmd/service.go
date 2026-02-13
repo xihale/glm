@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"text/template"
 
@@ -63,17 +62,14 @@ WantedBy=default.target
 `
 
 func installService() error {
-	usr, err := user.Current()
-	if err != nil {
-		return err
+	home, _ := os.UserHomeDir()
+	execPath := filepath.Join(home, ".local", "bin", "ai-daemon")
+
+	if _, err := os.Stat(execPath); os.IsNotExist(err) {
+		return fmt.Errorf("ai-daemon is not installed in %s. Please run 'ai-daemon install' first", execPath)
 	}
 
-	execPath, err := os.Executable()
-	if err != nil {
-		return err
-	}
-
-	serviceDir := filepath.Join(usr.HomeDir, ".config", "systemd", "user")
+	serviceDir := filepath.Join(home, ".config", "systemd", "user")
 	if err := os.MkdirAll(serviceDir, 0755); err != nil {
 		return err
 	}
@@ -116,12 +112,8 @@ func installService() error {
 }
 
 func uninstallService() error {
-	usr, err := user.Current()
-	if err != nil {
-		return err
-	}
-
-	serviceFile := filepath.Join(usr.HomeDir, ".config", "systemd", "user", "ai-daemon.service")
+	home, _ := os.UserHomeDir()
+	serviceFile := filepath.Join(home, ".config", "systemd", "user", "ai-daemon.service")
 
 	if _, err := os.Stat(serviceFile); os.IsNotExist(err) {
 		return fmt.Errorf("service file not found: %s", serviceFile)

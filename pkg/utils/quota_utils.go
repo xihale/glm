@@ -4,8 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"math/rand"
+	"regexp"
 	"strings"
+
 	"time"
 )
 
@@ -152,11 +153,48 @@ func scoreModel(modelID string) int {
 	return score
 }
 
-func GetRandomXGoogClient() string {
-	clients := []string{
-		"google-cloud-sdk vscode_cloudshelleditor/0.1",
-		"google-cloud-sdk vscode/1.96.0",
+func GetEarliestFutureResetTime(quotas map[string]ModelQuota) time.Time {
+	var earliest time.Time
+	now := time.Now()
+	for _, q := range quotas {
+		if q.ResetTime.IsZero() || q.ResetTime.Before(now) {
+			continue
+		}
+		if earliest.IsZero() || q.ResetTime.Before(earliest) {
+			earliest = q.ResetTime
+		}
 	}
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return clients[r.Intn(len(clients))]
+	return earliest
+}
+
+func FormatActivationError(err error, debug bool) {
+	errStr := err.Error()
+	if strings.Contains(errStr, "429") {
+		if strings.Contains(errStr, "reset after") {
+			re := regexp.MustCompile(`reset after ([\w.]+)`)
+			match := re.FindStringSubmatch(errStr)
+			if len(match) > 1 {
+				fmt.Printf("\033[31m[-] Exhausted (reset after %s)\033[0m\n", match[1])
+			} else {
+				fmt.Printf("\033[31m[-] Exhausted\033[0m\n")
+			}
+		} else {
+			fmt.Printf("\033[31m[-] Busy (429)\033[0m\n")
+		}
+		if debug {
+			fmt.Printf("      \033[31m[DEBUG] %v\033[0m\n", err)
+		}
+	} else {
+		fmt.Printf("\033[31m[-] Error: %v\033[0m\n", err)
+	}
+}
+
+func PrintSkipMessage(label string, info ModelQuota) {
+	timeStr := FormatTimeUntil(info.ResetTime)
+	if timeStr == "Soon" {
+		timeStr = "0m"
+	}
+
+	fmt.Printf("  [*] Activating %-25s ... \033[33mSkipped\033[0m (%3.0f%%, %s)\n",
+		label, info.Remaining, timeStr)
 }

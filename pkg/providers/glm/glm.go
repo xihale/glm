@@ -36,8 +36,8 @@ func NewProvider() *Provider {
 	}
 }
 
-func (p *Provider) Name() string { return "GLM Coding Plan" }
-func (p *Provider) ID() string   { return "glm" }
+func (p *Provider) Name() string    { return "GLM Coding Plan" }
+func (p *Provider) ID() string      { return "glm" }
 func (p *Provider) SetDebug(d bool) { p.Debug = d }
 
 func (p *Provider) Authenticate() error {
@@ -67,11 +67,15 @@ type quotaResponse struct {
 
 func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 	req, err := http.NewRequest("GET", p.BaseURL+QuotaEndpoint, nil)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	p.setHeaders(req)
 
 	resp, err := p.Client.Do(req)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
@@ -125,22 +129,21 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 }
 
 func (p *Provider) Activate(debug bool, force bool) error {
-	// Check current quota/reset time
 	quota, err := p.GetQuota()
-	if err == nil {
+	if err == nil && !force {
 		timeUntil := time.Until(quota.ResetTime)
-		// Apply same logic: skip if already significantly active
-		if !force && !quota.ResetTime.IsZero() && timeUntil > 0 && timeUntil < (4*time.Hour+59*time.Minute) {
-			fmt.Printf("  [*] Activating %-18s ... \033[33mSkipped\033[0m (%s left)\n", 
-				"GLM Heartbeat", pkgutils.FormatTimeUntil(quota.ResetTime))
+		if quota.Remaining > 10 || (!quota.ResetTime.IsZero() && timeUntil > 0 && timeUntil < (4*time.Hour+59*time.Minute)) {
+			q := pkgutils.ModelQuota{Remaining: float64(quota.Remaining), ResetTime: quota.ResetTime}
+			pkgutils.PrintSkipMessage("GLM Heartbeat", q)
 			return nil
 		}
 	}
 
-	fmt.Printf("  [*] Activating %-18s ... ", "GLM Heartbeat")
+	fmt.Printf("  [*] Activating %-25s ... ", "GLM Heartbeat")
 	err = p.SendHeartbeat()
+
 	if err != nil {
-		fmt.Printf("\033[31m[-] %v\033[0m\n", err)
+		pkgutils.FormatActivationError(err, debug)
 	} else {
 		fmt.Printf("\033[32m[+] Success\033[0m\n")
 	}
@@ -159,9 +162,14 @@ func (p *Provider) SendHeartbeat() error {
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.Client.Do(req)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK { return fmt.Errorf("status %d", resp.StatusCode) }
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))
+	}
 	return nil
 }
 

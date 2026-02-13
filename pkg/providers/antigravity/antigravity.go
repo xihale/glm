@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -114,12 +113,14 @@ func (p *Provider) Activate(debug bool, force bool) error {
 
 		timeUntil := time.Until(info.ResetTime)
 
-		if !force && !info.ResetTime.IsZero() && timeUntil > 0 && timeUntil < (4*time.Hour+59*time.Minute) {
-			fmt.Printf("  [*] Activating %-18s ... \033[33mSkipped\033[0m (%s left)\n", g.Label, pkgutils.FormatTimeUntil(info.ResetTime))
-			continue
+		if !force {
+			if info.Remaining > 10 || (!info.ResetTime.IsZero() && timeUntil > 0 && timeUntil < (4*time.Hour+59*time.Minute)) {
+				pkgutils.PrintSkipMessage(g.Label, info)
+				continue
+			}
 		}
 
-		fmt.Printf("  [*] Activating %-18s ... ", g.Label)
+		fmt.Printf("  [*] Activating %-25s ... ", g.Label)
 
 		var err error
 		for i, id := range g.IDs {
@@ -136,24 +137,7 @@ func (p *Provider) Activate(debug bool, force bool) error {
 		}
 
 		if err != nil {
-			if strings.Contains(err.Error(), "429") {
-				if strings.Contains(err.Error(), "reset after") {
-					re := regexp.MustCompile(`reset after ([\w.]+)`)
-					match := re.FindStringSubmatch(err.Error())
-					if len(match) > 1 {
-						fmt.Printf("\033[31m[-] Exhausted (reset after %s)\033[0m\n", match[1])
-					} else {
-						fmt.Printf("\033[31m[-] Exhausted\033[0m\n")
-					}
-				} else {
-					fmt.Printf("\033[31m[-] Busy (429)\033[0m\n")
-				}
-				if debug {
-					fmt.Printf("      \033[31m[DEBUG] %v\033[0m\n", err)
-				}
-			} else {
-				fmt.Printf("\033[31m[-] Error: %v\033[0m\n", err)
-			}
+			pkgutils.FormatActivationError(err, debug)
 		} else {
 			fmt.Printf("\033[32m[+] Success\033[0m\n")
 		}
