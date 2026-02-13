@@ -19,7 +19,8 @@ var activateCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		debug, _ := cmd.Flags().GetBool("debug")
 		force, _ := cmd.Flags().GetBool("force")
-		
+		group, _ := cmd.Flags().GetString("group")
+
 		targets := make(map[string]bool)
 		for _, arg := range args {
 			targets[arg] = true
@@ -42,7 +43,12 @@ var activateCmd = &cobra.Command{
 
 			fmt.Printf("\033[1m[ %s ]\033[0m\n", p.Name())
 			p.SetDebug(debug)
+			// Pass group filter to providers that support it
+			if ap, ok := p.(interface{ SetGroup(string) }); ok {
+				ap.SetGroup(group)
+			}
 			if err := p.Authenticate(); err != nil {
+
 				fmt.Printf("  \033[33m[!] Auth skipped: %v\033[0m\n", err)
 				fmt.Println()
 				continue
@@ -59,5 +65,6 @@ var activateCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(activateCmd)
 	activateCmd.Flags().Bool("debug", false, "Enable debug output")
-	activateCmd.Flags().Bool("force", false, "Force activation")
+	activateCmd.Flags().BoolP("force", "f", false, "Force activation")
+	activateCmd.Flags().StringP("group", "g", "", "Select specific model group to activate")
 }

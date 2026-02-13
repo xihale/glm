@@ -18,18 +18,33 @@ type ModelQuota struct {
 func ExtractAllModelQuotas(raw string) map[string]ModelQuota {
 	var data struct {
 		Models map[string]struct {
-			QuotaInfo struct {
-				RemainingFraction float64 `json:"remainingFraction"`
-				ResetTime         string  `json:"resetTime"`
+			SupportsThinking bool `json:"supportsThinking"`
+			QuotaInfo        struct {
+				RemainingFraction *float64 `json:"remainingFraction"`
+				ResetTime         string   `json:"resetTime"`
 			} `json:"quotaInfo"`
 		} `json:"models"`
 	}
 	res := make(map[string]ModelQuota)
-	if err := json.Unmarshal([]byte(raw), &data); err != nil { return res }
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		return res
+	}
 	for id, m := range data.Models {
 		t, _ := time.Parse(time.RFC3339, m.QuotaInfo.ResetTime)
+
+		remaining := 0.0
+		if m.QuotaInfo.RemainingFraction != nil {
+			remaining = *m.QuotaInfo.RemainingFraction * 100
+		} else if !t.IsZero() && time.Until(t) <= 0 {
+			// If missing but reset time is in the past, assume available
+			remaining = 100.0
+		} else if t.IsZero() {
+			// If no reset time, assume available
+			remaining = 100.0
+		}
+
 		res[id] = ModelQuota{
-			Remaining: m.QuotaInfo.RemainingFraction * 100,
+			Remaining: remaining,
 			ResetTime: t,
 		}
 	}
@@ -46,7 +61,9 @@ func ExtractAllCliQuotas(raw string) map[string]ModelQuota {
 		} `json:"buckets"`
 	}
 	res := make(map[string]ModelQuota)
-	if err := json.Unmarshal([]byte(raw), &data); err != nil { return res }
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		return res
+	}
 
 	type group struct {
 		rem   float64
@@ -55,7 +72,9 @@ func ExtractAllCliQuotas(raw string) map[string]ModelQuota {
 	}
 	groups := make(map[string]*group)
 	for _, b := range data.Buckets {
-		if b.ModelID == "" || strings.HasSuffix(b.ModelID, "_vertex") { continue }
+		if b.ModelID == "" || strings.HasSuffix(b.ModelID, "_vertex") {
+			continue
+		}
 		key := fmt.Sprintf("%.2f-%s", b.RemainingFraction, b.ResetTime)
 		if _, ok := groups[key]; !ok {
 			groups[key] = &group{rem: b.RemainingFraction, reset: b.ResetTime}
@@ -74,7 +93,9 @@ func ExtractAllCliQuotas(raw string) map[string]ModelQuota {
 // ... (GenerateFingerprint, FormatTimeUntil, SelectRepresentativeModel, scoreModel, GetRandomXGoogClient 保持不变) ...
 
 func GenerateFingerprint(email string) (string, string) {
-	if email == "" { email = "anonymous@ai-daemon.internal" }
+	if email == "" {
+		email = "anonymous@ai-daemon.internal"
+	}
 	seed := fmt.Sprintf("%s-%d", email, time.Now().UnixNano()/int64(time.Hour))
 	hash := sha256.Sum256([]byte(seed))
 	deviceId := fmt.Sprintf("%x", hash)[:32]
@@ -84,16 +105,24 @@ func GenerateFingerprint(email string) (string, string) {
 
 func FormatTimeUntil(t time.Time) string {
 	d := time.Until(t)
-	if d < 0 { return "Soon" }
+	if d < 0 {
+		return "Soon"
+	}
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
-	if h > 0 { return fmt.Sprintf("%dh %dm", h, m) }
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
 	return fmt.Sprintf("%dm", m)
 }
 
 func SelectRepresentativeModel(models []string) string {
-	if len(models) == 0 { return "" }
-	if len(models) == 1 { return models[0] }
+	if len(models) == 0 {
+		return ""
+	}
+	if len(models) == 1 {
+		return models[0]
+	}
 	best := models[0]
 	bestScore := scoreModel(best)
 	for _, m := range models[1:] {
@@ -108,10 +137,18 @@ func SelectRepresentativeModel(models []string) string {
 
 func scoreModel(modelID string) int {
 	score := 0
-	if strings.HasPrefix(modelID, "gemini-3-") { score += 300 }
-	if strings.HasPrefix(modelID, "gemini-2.5-") { score += 200 }
-	if strings.Contains(modelID, "-pro") { score += 50 }
-	if strings.Contains(modelID, "-flash") { score += 30 }
+	if strings.HasPrefix(modelID, "gemini-3-") {
+		score += 300
+	}
+	if strings.HasPrefix(modelID, "gemini-2.5-") {
+		score += 200
+	}
+	if strings.Contains(modelID, "-pro") {
+		score += 50
+	}
+	if strings.Contains(modelID, "-flash") {
+		score += 30
+	}
 	return score
 }
 

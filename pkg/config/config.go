@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -20,11 +21,12 @@ type GLMConfig struct {
 }
 
 type GeminiConfig struct {
-	Secure1PSID   string `mapstructure:"secure_1psid" json:"secure_1psid"`
-	Secure1PSIDTS string `mapstructure:"secure_1psidts" json:"secure_1psidts"`
-	AccessToken   string `mapstructure:"access_token" json:"access_token"`
-	RefreshToken  string `mapstructure:"refresh_token" json:"refresh_token"`
-	ProjectID     string `mapstructure:"project_id" json:"project_id"`
+	Secure1PSID   string    `mapstructure:"secure_1psid" json:"secure_1psid"`
+	Secure1PSIDTS string    `mapstructure:"secure_1psidts" json:"secure_1psidts"`
+	AccessToken   string    `mapstructure:"access_token" json:"access_token"`
+	RefreshToken  string    `mapstructure:"refresh_token" json:"refresh_token"`
+	ProjectID     string    `mapstructure:"project_id" json:"project_id"`
+	Expiry        time.Time `mapstructure:"expiry" json:"expiry"`
 }
 
 type AntigravityConfig struct {

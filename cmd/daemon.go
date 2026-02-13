@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"time"
 
+	"ai-daemon/internal/utils"
+	"ai-daemon/pkg/config"
 	"ai-daemon/pkg/providers/antigravity"
 	"ai-daemon/pkg/providers/geminicli"
 	"ai-daemon/pkg/providers/glm"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var daemonCmd = &cobra.Command{
@@ -32,10 +35,11 @@ func init() {
 
 func runDaemon() {
 	fmt.Println("Starting ai-daemon scheduler...")
-	
+
 	c := cron.New(cron.WithSeconds())
 
-	_, err := c.AddFunc("0 0 * * * *", func() {
+	// Check for token expiration every 5 minutes
+	_, err := c.AddFunc("0 */5 * * * *", func() {
 		runRefreshWithJitter()
 	})
 	if err != nil {
@@ -60,6 +64,42 @@ func runRefreshWithJitter() {
 	time.Sleep(jitter)
 
 	fmt.Printf("[%s] Starting scheduled refresh...\n", time.Now().Format(time.RFC3339))
+
+	// Refresh Gemini token if it's about to expire (within 5 minutes) or has already expired
+	geminiConfig := config.Current.Gemini
+	shouldRefresh := geminiConfig.RefreshToken != "" &&
+		(geminiConfig.Expiry.IsZero() || time.Now().Add(5*time.Minute).After(geminiConfig.Expiry))
+
+	if shouldRefresh {
+		fmt.Printf("Token expiring soon (or expired). Current time: %s, Expiry: %s. Refreshing...\n",
+			time.Now().Format(time.RFC3339), geminiConfig.Expiry.Format(time.RFC3339))
+
+		newTokens, err := utils.RefreshGeminiToken(geminiConfig.RefreshToken)
+		if err != nil {
+			fmt.Printf("Warning: Token refresh failed: %v\n", err)
+		} else {
+			fmt.Println("Token refreshed successfully.")
+			config.Current.Gemini.AccessToken = newTokens.AccessToken
+			viper.Set("gemini.access_token", newTokens.AccessToken)
+
+			if newTokens.RefreshToken != "" {
+				config.Current.Gemini.RefreshToken = newTokens.RefreshToken
+				viper.Set("gemini.refresh_token", newTokens.RefreshToken)
+			}
+
+			if newTokens.ExpiresIn > 0 {
+				expiry := time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
+				config.Current.Gemini.Expiry = expiry
+				viper.Set("gemini.expiry", expiry)
+			}
+
+			if err := config.SaveConfig(); err != nil {
+				fmt.Printf("Warning: Failed to save config after refresh: %v\n", err)
+			}
+		}
+	} else if geminiConfig.RefreshToken != "" {
+		fmt.Printf("Token still valid. Expires at: %s. Skipping refresh.\n", geminiConfig.Expiry.Format(time.RFC3339))
+	}
 
 	registry := []interfaces.Provider{
 		glm.NewProvider(),

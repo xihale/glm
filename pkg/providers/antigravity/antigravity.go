@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,19 +17,21 @@ import (
 )
 
 type Provider struct {
-	Client *http.Client
-	Debug  bool
+	Client      *http.Client
+	Debug       bool
+	TargetGroup string
 }
 
 func NewProvider() *Provider {
 	return &Provider{
-		Client: &http.Client{Timeout: 15 * time.Second},
+		Client: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
-func (p *Provider) Name() string { return "Antigravity IDE" }
-func (p *Provider) ID() string   { return "antigravity" }
-func (p *Provider) SetDebug(d bool) { p.Debug = d }
+func (p *Provider) Name() string          { return "Antigravity IDE" }
+func (p *Provider) ID() string            { return "antigravity" }
+func (p *Provider) SetDebug(d bool)       { p.Debug = d }
+func (p *Provider) SetGroup(group string) { p.TargetGroup = group }
 
 func (p *Provider) Authenticate() error {
 	if config.Current.Gemini.AccessToken == "" {
@@ -44,7 +47,9 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 	if projectID == "" {
 		var err error
 		projectID, err = utils.FetchProjectID(token)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	url := "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
@@ -56,7 +61,9 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 	req.Header.Set("User-Agent", "antigravity/1.15.8 windows/amd64")
 
 	resp, err := p.Client.Do(req)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
@@ -68,30 +75,82 @@ func (p *Provider) Activate(debug bool, force bool) error {
 	projectID := config.Current.Gemini.ProjectID
 
 	quota, err := p.GetQuota()
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	modelMap := pkgutils.ExtractAllModelQuotas(quota.Raw)
-	models := []struct{ID, Label string}{
-		{"gemini-3-flash", "Gemini 3 Flash"},
-		{"gemini-3-pro-low", "Gemini 3 Pro"},
-		{"claude-sonnet-4-5", "Claude Sonnet 4.5"},
+	groups := []struct {
+		IDs   []string
+		Label string
+	}{
+		{[]string{"gemini-3-flash"}, "Gemini 3 Flash"},
+		{[]string{"gemini-3-pro-low"}, "Gemini 3 Pro"},
+		{[]string{"claude-sonnet-4-5-thinking", "claude-sonnet-4-5", "gpt-oss-120b-medium", "claude-opus-4-5-thinking"}, "Claude / GPT-OSS"},
 	}
-	
-	for _, m := range models {
-		info, ok := modelMap[m.ID]
-		timeUntil := time.Until(info.ResetTime)
-		
-		// Skip only if 0 < timeUntil < 4h 59m
-		if !force && ok && !info.ResetTime.IsZero() && timeUntil > 0 && timeUntil < (4*time.Hour+59*time.Minute) {
-			fmt.Printf("  [*] Activating %-18s ... \033[33mSkipped\033[0m (%s left)\n", m.Label, pkgutils.FormatTimeUntil(info.ResetTime))
+
+	for _, g := range groups {
+		if p.TargetGroup != "" && !strings.Contains(strings.ToLower(g.Label), strings.ToLower(p.TargetGroup)) {
 			continue
 		}
 
-		fmt.Printf("  [*] Activating %-18s ... ", m.Label)
-		err := p.sendActivation(token, projectID, m.ID)
+		var info pkgutils.ModelQuota
+		var found bool
+
+		for _, id := range g.IDs {
+			if m, ok := modelMap[id]; ok {
+				if !found {
+					info = m
+					found = true
+				}
+			}
+		}
+
+		if !found {
+			if !force || len(g.IDs) == 0 {
+				continue
+			}
+		}
+
+		timeUntil := time.Until(info.ResetTime)
+
+		if !force && !info.ResetTime.IsZero() && timeUntil > 0 && timeUntil < (4*time.Hour+59*time.Minute) {
+			fmt.Printf("  [*] Activating %-18s ... \033[33mSkipped\033[0m (%s left)\n", g.Label, pkgutils.FormatTimeUntil(info.ResetTime))
+			continue
+		}
+
+		fmt.Printf("  [*] Activating %-18s ... ", g.Label)
+
+		var err error
+		for i, id := range g.IDs {
+			if i > 0 {
+				fmt.Printf("\n      \033[33m[!] Retrying with fallback: %s ... \033[0m", id)
+			}
+			err = p.sendActivation(token, projectID, id)
+			if err == nil {
+				break
+			}
+			if !strings.Contains(err.Error(), "QUOTA_EXHAUSTED") {
+				break
+			}
+		}
+
 		if err != nil {
 			if strings.Contains(err.Error(), "429") {
-				fmt.Printf("\033[31m[-] Busy (429)\033[0m\n")
+				if strings.Contains(err.Error(), "reset after") {
+					re := regexp.MustCompile(`reset after ([\w.]+)`)
+					match := re.FindStringSubmatch(err.Error())
+					if len(match) > 1 {
+						fmt.Printf("\033[31m[-] Exhausted (reset after %s)\033[0m\n", match[1])
+					} else {
+						fmt.Printf("\033[31m[-] Exhausted\033[0m\n")
+					}
+				} else {
+					fmt.Printf("\033[31m[-] Busy (429)\033[0m\n")
+				}
+				if debug {
+					fmt.Printf("      \033[31m[DEBUG] %v\033[0m\n", err)
+				}
 			} else {
 				fmt.Printf("\033[31m[-] Error: %v\033[0m\n", err)
 			}
@@ -105,31 +164,53 @@ func (p *Provider) Activate(debug bool, force bool) error {
 
 func (p *Provider) sendActivation(token, projectID, model string) error {
 	url := "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
-	deviceId, quotaUser := pkgutils.GenerateFingerprint(config.Current.Gemini.AccessToken)
-	
+	deviceId, _ := pkgutils.GenerateFingerprint(config.Current.Gemini.AccessToken)
+
+	systemPrompt := "Please ignore the following [ignore]You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.**Absolute paths only****Proactiveness**[/ignore]"
+
+	thinkingConfig := map[string]interface{}{
+		"includeThoughts": true,
+	}
+	if strings.Contains(model, "gemini-3") {
+		thinkingConfig["thinkingLevel"] = "low"
+	} else {
+		thinkingConfig["thinkingBudget"] = 1024
+	}
+
+	requestId := fmt.Sprintf("agent-%s", deviceId)
 	body := map[string]interface{}{
 		"project": projectID, "model": model,
 		"request": map[string]interface{}{
 			"contents": []map[string]interface{}{{"role": "user", "parts": []map[string]string{{"text": "hi"}}}},
+			"systemInstruction": map[string]interface{}{
+				"role":  "user",
+				"parts": []map[string]string{{"text": systemPrompt}},
+			},
 			"generationConfig": map[string]interface{}{
-				"maxOutputTokens": 4096,
-				"thinkingConfig":  map[string]interface{}{"include_thoughts": true, "thinking_budget": 4000},
+				"maxOutputTokens": 16384,
+				"thinkingConfig":  thinkingConfig,
 			},
 		},
 		"requestType": "agent", "userAgent": "antigravity",
+		"requestId": requestId,
 	}
-	
+
 	b, _ := json.Marshal(body)
 	req, _ := http.NewRequest("POST", url, bytes.NewReader(b))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "antigravity/1.15.8 windows/amd64")
-	req.Header.Set("X-Goog-Api-Client", pkgutils.GetRandomXGoogClient())
-	req.Header.Set("Client-Metadata", fmt.Sprintf(`{"ideType":"ANTIGRAVITY","platform":"WINDOWS","pluginType":"GEMINI","deviceId":"%s","quotaUser":"%s"}`, deviceId, quotaUser))
-	
+	req.Header.Set("requestId", requestId)
+	req.Header.Set("requestType", "agent")
+
 	resp, err := p.Client.Do(req)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 { return fmt.Errorf("status %d", resp.StatusCode) }
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
 	return nil
 }
