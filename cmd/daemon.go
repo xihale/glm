@@ -138,46 +138,34 @@ func runDaemonOneShot() {
 }
 
 func refreshAllTokens() {
-	geminiConfig := config.Current.Gemini
-	if geminiConfig.RefreshToken != "" {
-		if geminiConfig.Expiry.IsZero() || time.Now().Add(5*time.Minute).After(geminiConfig.Expiry) {
-			fmt.Printf("Refreshing Global Gemini token...\n")
-			newTokens, err := utils.RefreshGeminiToken(geminiConfig.RefreshToken)
-			if err != nil {
-				fmt.Printf("Warning: Global Token refresh failed: %v\n", err)
-			} else {
-				config.Current.Gemini.AccessToken = newTokens.AccessToken
-				viper.Set("gemini.access_token", newTokens.AccessToken)
+	var globalUpdated, listUpdated bool
 
-				if newTokens.RefreshToken != "" {
-					config.Current.Gemini.RefreshToken = newTokens.RefreshToken
-					viper.Set("gemini.refresh_token", newTokens.RefreshToken)
-				}
+	if config.Current.Gemini.RefreshToken != "" {
+		if newTokens, refreshed := refreshIfExpired("Global", config.Current.Gemini.RefreshToken, config.Current.Gemini.Expiry); refreshed {
+			config.Current.Gemini.AccessToken = newTokens.AccessToken
+			viper.Set("gemini.access_token", newTokens.AccessToken)
 
-				if newTokens.ExpiresIn > 0 {
-					expiry := time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
-					config.Current.Gemini.Expiry = expiry
-					viper.Set("gemini.expiry", expiry)
-				}
-				fmt.Println("Global Token refreshed successfully.")
+			if newTokens.RefreshToken != "" {
+				config.Current.Gemini.RefreshToken = newTokens.RefreshToken
+				viper.Set("gemini.refresh_token", newTokens.RefreshToken)
 			}
+
+			if newTokens.ExpiresIn > 0 {
+				expiry := time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
+				config.Current.Gemini.Expiry = expiry
+				viper.Set("gemini.expiry", expiry)
+			}
+			globalUpdated = true
 		}
 	}
 
-	var updated bool
 	for i, pCfg := range config.Current.Providers {
 		if pCfg.RefreshToken == "" {
 			continue
 		}
 
-		if pCfg.Expiry.IsZero() || time.Now().Add(5*time.Minute).After(pCfg.Expiry) {
-			fmt.Printf("Refreshing token for provider '%s' (%s)...\n", pCfg.Name, pCfg.Type)
-			newTokens, err := utils.RefreshGeminiToken(pCfg.RefreshToken)
-			if err != nil {
-				fmt.Printf("Warning: Token refresh failed for '%s': %v\n", pCfg.Name, err)
-				continue
-			}
-
+		label := fmt.Sprintf("%s (%s)", pCfg.Name, pCfg.Type)
+		if newTokens, refreshed := refreshIfExpired(label, pCfg.RefreshToken, pCfg.Expiry); refreshed {
 			config.Current.Providers[i].AccessToken = newTokens.AccessToken
 			if newTokens.RefreshToken != "" {
 				config.Current.Providers[i].RefreshToken = newTokens.RefreshToken
@@ -185,18 +173,31 @@ func refreshAllTokens() {
 			if newTokens.ExpiresIn > 0 {
 				config.Current.Providers[i].Expiry = time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
 			}
-			updated = true
-			fmt.Printf("Token refreshed for '%s'.\n", pCfg.Name)
+			listUpdated = true
 		}
 	}
 
-	if updated || geminiConfig.RefreshToken != "" {
-		if updated {
-			viper.Set("providers", config.Current.Providers)
-		}
+	if listUpdated {
+		viper.Set("providers", config.Current.Providers)
+	}
 
+	if globalUpdated || listUpdated {
 		if err := config.SaveConfig(); err != nil {
 			fmt.Printf("Warning: Failed to save config: %v\n", err)
 		}
 	}
+}
+
+func refreshIfExpired(name, refreshToken string, expiry time.Time) (*utils.GeminiTokenResponse, bool) {
+	if expiry.IsZero() || time.Now().Add(5*time.Minute).After(expiry) {
+		fmt.Printf("Refreshing token for '%s'...\n", name)
+		newTokens, err := utils.RefreshGeminiToken(refreshToken)
+		if err != nil {
+			fmt.Printf("Warning: Token refresh failed for '%s': %v\n", name, err)
+			return nil, false
+		}
+		fmt.Printf("Token refreshed for '%s'.\n", name)
+		return newTokens, true
+	}
+	return nil, false
 }
