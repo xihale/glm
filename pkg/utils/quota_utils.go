@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 
@@ -32,6 +33,11 @@ func ExtractAllModelQuotas(raw string) map[string]ModelQuota {
 	}
 	for id, m := range data.Models {
 		t, _ := time.Parse(time.RFC3339, m.QuotaInfo.ResetTime)
+
+		// If the parsed time is not zero, convert it to local time for consistent display
+		if !t.IsZero() {
+			t = t.Local()
+		}
 
 		remaining := 0.0
 		if m.QuotaInfo.RemainingFraction != nil {
@@ -121,19 +127,30 @@ func FormatTimeUntil(t time.Time) string {
 }
 
 func ShouldSkipActivation(remaining float64, resetTime time.Time, force bool) bool {
+	// Antigravity: Active if 100% and >= 4h59m (5h - 1m)
+	return !ShouldActivate(remaining, resetTime, force, 5*time.Hour-1*time.Minute)
+}
+
+func ShouldSkipGeminiActivation(remaining float64, resetTime time.Time, force bool) bool {
+	// Gemini: Active if 100% and >= 23h59m (24h - 1m)
+	return !ShouldActivate(remaining, resetTime, force, 24*time.Hour-1*time.Minute)
+}
+
+func ShouldActivate(remaining float64, resetTime time.Time, force bool, threshold time.Duration) bool {
 	if force {
-		return false
+		return true
 	}
 	if resetTime.IsZero() {
-		return false
+		return true
 	}
+
 	timeUntil := time.Until(resetTime)
-	// Never skip if the reset time has passed or is very soon (less than 1 min)
-	if timeUntil < 1*time.Minute {
-		return false
-	}
-	// Only skip if we have > 10% remaining AND it won't reset for at least 5 hours
-	return remaining > 10 && timeUntil > 5*time.Hour
+
+	// User defined logic: Active only if 100% quota AND time >= threshold
+	isFull := remaining >= 100
+	isLongEnough := timeUntil >= threshold
+
+	return isFull && isLongEnough
 }
 
 func SelectRepresentativeModel(models []string) string {
@@ -187,30 +204,43 @@ func GetEarliestFutureResetTime(quotas map[string]ModelQuota) time.Time {
 }
 
 func FormatActivationError(err error, debug bool) {
+	FormatActivationErrorWithWriter(nil, err, debug)
+}
+
+func FormatActivationErrorWithWriter(w io.Writer, err error, debug bool) {
+	if w == nil {
+		return
+	}
 	errStr := err.Error()
 	if strings.Contains(errStr, "429") {
 		if strings.Contains(errStr, "reset after") {
 			re := regexp.MustCompile(`reset after ([\w.]+)`)
 			match := re.FindStringSubmatch(errStr)
 			if len(match) > 1 {
-				fmt.Printf("\033[31m[-] Exhausted (reset after %s)\033[0m\n", match[1])
+				fmt.Fprintf(w, "\033[31m[-] Exhausted (reset after %s)\033[0m\n", match[1])
 			} else {
-				fmt.Printf("\033[31m[-] Exhausted\033[0m\n")
+				fmt.Fprintf(w, "\033[31m[-] Exhausted\033[0m\n")
 			}
 		} else {
-			fmt.Printf("\033[31m[-] Busy (429)\033[0m\n")
+			fmt.Fprintf(w, "\033[31m[-] Busy (429)\033[0m\n")
 		}
 		if debug {
-			fmt.Printf("      \033[31m[DEBUG] %v\033[0m\n", err)
+			fmt.Fprintf(w, "      \033[31m[DEBUG] %v\033[0m\n", err)
 		}
 	} else {
-		fmt.Printf("\033[31m[-] Error: %v\033[0m\n", err)
+		fmt.Fprintf(w, "\033[31m[-] Error: %v\033[0m\n", err)
 	}
 }
 
 func PrintSkipMessage(label string, info ModelQuota) {
-	timeStr := FormatTimeUntil(info.ResetTime)
+	// Keep for backward compatibility if needed, though unused now
+}
 
-	fmt.Printf("  [*] Activating %-25s ... \033[33mSkipped\033[0m (%3.0f%%, %s)\n",
+func PrintSkipMessageWithWriter(w io.Writer, label string, info ModelQuota) {
+	if w == nil {
+		return
+	}
+	timeStr := FormatTimeUntil(info.ResetTime)
+	fmt.Fprintf(w, "  [*] Activating %-25s ... \033[33mSkipped\033[0m (%3.0f%%, %s)\n",
 		label, info.Remaining, timeStr)
 }

@@ -62,7 +62,7 @@ func runDaemonOneShot() {
 			continue
 		}
 
-		if err := p.Activate(false, false); err != nil {
+		if err := p.Activate(nil, false, false); err != nil {
 			fmt.Printf("Warning: %s activation error: %v\n", p.Name(), err)
 		}
 

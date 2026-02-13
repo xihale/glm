@@ -21,14 +21,14 @@ func LoadProvidersFromConfig() []interfaces.Provider {
 		registry = append(registry, glm.NewProvider())
 	}
 
-	// Antigravity (Legacy)
-	if config.Current.Gemini.AccessToken != "" && config.Current.Antigravity.Enabled {
-		registry = append(registry, antigravity.NewProvider())
-	}
-
 	// GeminiCLI (Legacy)
-	if config.Current.Gemini.AccessToken != "" {
+	geminiEnabled := config.Current.Gemini.AccessToken != ""
+	if geminiEnabled {
 		registry = append(registry, geminicli.NewProvider())
+		// Only sync antigravity if enabled in legacy config
+		if config.Current.Antigravity.Enabled {
+			registry = append(registry, antigravity.NewProvider())
+		}
 	}
 
 	// 2. Load multi-account providers from config.Current.Providers
@@ -37,27 +37,19 @@ func LoadProvidersFromConfig() []interfaces.Provider {
 			continue
 		}
 
-		var p interfaces.Provider
-
 		switch strings.ToLower(pCfg.Type) {
 		case "glm":
-			p = glm.NewProviderWithConfig(pCfg)
+			registry = append(registry, glm.NewProviderWithConfig(pCfg))
 		case "antigravity":
-			p = antigravity.NewProviderWithConfig(pCfg)
+			registry = append(registry, antigravity.NewProviderWithConfig(pCfg))
 		case "geminicli", "gemini":
-			p = geminicli.NewProviderWithConfig(pCfg)
-			registry = append(registry, p)
+			registry = append(registry, geminicli.NewProviderWithConfig(pCfg))
+			// Only sync antigravity if NOT explicitly disabled for this provider
 			if !pCfg.DisableAntigravity {
 				registry = append(registry, antigravity.NewProviderWithConfig(pCfg))
 			}
-			continue
 		default:
 			fmt.Printf("Warning: Unknown provider type '%s' for provider '%s'\n", pCfg.Type, pCfg.Name)
-			continue
-		}
-
-		if p != nil {
-			registry = append(registry, p)
 		}
 	}
 

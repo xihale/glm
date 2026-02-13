@@ -21,8 +21,22 @@ var monitorCmd = &cobra.Command{
 		targets := make(map[string]bool)
 		for _, arg := range args {
 			targets[arg] = true
-			if arg == "gemini" {
+			// If gemini/geminicli/antigravity is targeted, ensure they are linked
+			if arg == "gemini" || arg == "geminicli" || arg == "antigravity" {
+				targets["gemini"] = true
 				targets["geminicli"] = true
+				targets["antigravity"] = true
+			}
+			// Handle specific account targets to ensure paired monitoring
+			if strings.HasPrefix(arg, "gemini_") {
+				targets[strings.Replace(arg, "gemini_", "geminicli_", 1)] = true
+				targets[strings.Replace(arg, "gemini_", "antigravity_", 1)] = true
+			}
+			if strings.HasPrefix(arg, "geminicli_") {
+				targets[strings.Replace(arg, "geminicli_", "antigravity_", 1)] = true
+			}
+			if strings.HasPrefix(arg, "antigravity_") {
+				targets[strings.Replace(arg, "antigravity_", "geminicli_", 1)] = true
 			}
 		}
 

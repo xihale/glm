@@ -19,6 +19,6 @@ type Provider interface {
 	ID() string
 	Authenticate() error
 	GetQuota() (*QuotaStatus, error)
-	Activate(debug bool, force bool) error
+	Activate(w interface{}, debug bool, force bool) error
 	SetDebug(debug bool)
 }

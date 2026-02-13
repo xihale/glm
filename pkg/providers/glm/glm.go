@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"ai-daemon/pkg/config"
@@ -153,23 +154,36 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 	}, nil
 }
 
-func (p *Provider) Activate(debug bool, force bool) error {
+func (p *Provider) Activate(w interface{}, debug bool, force bool) error {
+	var writer io.Writer
+	if w != nil {
+		if wr, ok := w.(io.Writer); ok {
+			writer = wr
+		}
+	}
+	if writer == nil {
+		writer = os.Stdout
+	}
+
 	quota, err := p.GetQuota()
 	if err == nil {
-		if pkgutils.ShouldSkipActivation(float64(quota.Remaining), quota.ResetTime, force) {
+		timeStr := pkgutils.FormatTimeUntil(quota.ResetTime)
+		// For GLM, we only skip if it's not "0m" and not "Passed"
+		// This ensures that when it shows "0m", activation is always allowed.
+		if !force && timeStr != "0m" && timeStr != "Passed" {
 			q := pkgutils.ModelQuota{Remaining: float64(quota.Remaining), ResetTime: quota.ResetTime}
-			pkgutils.PrintSkipMessage("General", q)
+			pkgutils.PrintSkipMessageWithWriter(writer, "General", q)
 			return nil
 		}
 	}
 
-	fmt.Printf("  [*] Activating %-25s ... ", "General")
+	fmt.Fprintf(writer, "  [*] Activating %-25s ... ", "General")
 	err = p.SendHeartbeat()
 
 	if err != nil {
-		pkgutils.FormatActivationError(err, debug)
+		pkgutils.FormatActivationErrorWithWriter(writer, err, debug)
 	} else {
-		fmt.Printf("\033[32m[+] Success\033[0m\n")
+		fmt.Fprintf(writer, "\033[32m[+] Success\033[0m\n")
 	}
 	return nil
 }

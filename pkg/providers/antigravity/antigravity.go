@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -160,7 +161,17 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 	return &interfaces.QuotaStatus{Type: "antigravity_remote", Raw: string(body)}, nil
 }
 
-func (p *Provider) Activate(debug bool, force bool) error {
+func (p *Provider) Activate(w interface{}, debug bool, force bool) error {
+	var writer io.Writer
+	if w != nil {
+		if wr, ok := w.(io.Writer); ok {
+			writer = wr
+		}
+	}
+	if writer == nil {
+		writer = os.Stdout
+	}
+
 	token := p.getAccessToken()
 	projectID := p.getProjectID()
 
@@ -203,16 +214,16 @@ func (p *Provider) Activate(debug bool, force bool) error {
 		}
 
 		if pkgutils.ShouldSkipActivation(info.Remaining, info.ResetTime, force) {
-			pkgutils.PrintSkipMessage(g.Label, info)
+			pkgutils.PrintSkipMessageWithWriter(writer, g.Label, info)
 			continue
 		}
 
-		fmt.Printf("  [*] Activating %-25s ... ", g.Label)
+		fmt.Fprintf(writer, "  [*] Activating %-25s ... ", g.Label)
 
 		var err error
 		for i, id := range g.IDs {
 			if i > 0 {
-				fmt.Printf("\n      \033[33m[!] Retrying with fallback: %s ... \033[0m", id)
+				fmt.Fprintf(writer, "\n      \033[33m[!] Retrying with fallback: %s ... \033[0m", id)
 			}
 			err = p.sendActivation(token, projectID, id)
 			if err == nil {
@@ -224,11 +235,10 @@ func (p *Provider) Activate(debug bool, force bool) error {
 		}
 
 		if err != nil {
-			pkgutils.FormatActivationError(err, debug)
+			pkgutils.FormatActivationErrorWithWriter(writer, err, debug)
 		} else {
-			fmt.Printf("\033[32m[+] Success\033[0m\n")
+			fmt.Fprintf(writer, "\033[32m[+] Success\033[0m\n")
 		}
-		time.Sleep(5 * time.Second)
 	}
 	return nil
 }
