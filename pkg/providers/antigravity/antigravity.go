@@ -202,13 +202,9 @@ func (p *Provider) Activate(debug bool, force bool) error {
 			}
 		}
 
-		timeUntil := time.Until(info.ResetTime)
-		if !force {
-			if !info.ResetTime.IsZero() && timeUntil > 5*time.Hour && info.Remaining > 10 {
-				pkgutils.PrintSkipMessage(g.Label, info)
-
-				continue
-			}
+		if pkgutils.ShouldSkipActivation(info.Remaining, info.ResetTime, force) {
+			pkgutils.PrintSkipMessage(g.Label, info)
+			continue
 		}
 
 		fmt.Printf("  [*] Activating %-25s ... ", g.Label)
