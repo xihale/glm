@@ -16,7 +16,7 @@ var loginCmd = &cobra.Command{
 
 var loginGeminiCmd = &cobra.Command{
 	Use:   "gemini [account_name]",
-	Short: "Log in to Gemini/Antigravity via Google OAuth",
+	Short: "Log in to Gemini/Antigravity (optional: specify account name)",
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("\n\033[1;36mGoogle OAuth Authentication Flow\033[0m\n")
 		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
