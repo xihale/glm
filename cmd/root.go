@@ -30,4 +30,5 @@ func init() {
 	cobra.OnInitialize(config.InitConfig)
 
 	rootCmd.PersistentFlags().StringVar(&config.CfgFile, "config", "", "config file (default is $HOME/.config/ai-daemon/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&config.Current.Proxy, "proxy", "", "HTTP/SOCKS proxy URL (e.g. http://localhost:1080)")
 }

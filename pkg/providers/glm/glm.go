@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ai-daemon/pkg/config"
+	"ai-daemon/pkg/httputil"
 	"ai-daemon/pkg/providers/interfaces"
 	pkgutils "ai-daemon/pkg/utils"
 )
@@ -34,7 +35,7 @@ type Provider struct {
 func NewProvider() *Provider {
 	return &Provider{
 		BaseURL: BaseURL,
-		Client:  &http.Client{Timeout: 10 * time.Second},
+		Client:  httputil.NewHttpClient(10 * time.Second),
 	}
 }
 

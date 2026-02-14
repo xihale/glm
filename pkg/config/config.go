@@ -11,6 +11,7 @@ import (
 )
 
 type Config struct {
+	Proxy       string            `mapstructure:"proxy" json:"proxy" yaml:"proxy,omitempty"`
 	GLM         GLMConfig         `mapstructure:"glm" json:"glm" yaml:"glm,omitempty"`
 	Gemini      GeminiConfig      `mapstructure:"gemini" json:"gemini" yaml:"gemini,omitempty"`
 	Antigravity AntigravityConfig `mapstructure:"antigravity" json:"antigravity" yaml:"antigravity,omitempty"`
