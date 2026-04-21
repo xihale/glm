@@ -30,6 +30,7 @@ type Provider struct {
 	Client  *http.Client
 	Debug   bool
 	Config  config.ProviderConfig
+	total   int
 }
 
 func NewProvider() *Provider {
@@ -48,7 +49,13 @@ func NewProviderWithConfig(cfg config.ProviderConfig) *Provider {
 	return p
 }
 
+// SetTotal sets the total number of providers for display purposes.
+func (p *Provider) SetTotal(n int) { p.total = n }
+
 func (p *Provider) Name() string {
+	if p.total <= 1 {
+		return ""
+	}
 	if p.Config.Name != "" {
 		return "[GLM - " + p.Config.Name + "]"
 	}

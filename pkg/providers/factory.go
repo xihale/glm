@@ -53,5 +53,13 @@ func LoadProvidersFromConfig() []interfaces.Provider {
 		}
 	}
 
+	// 3. Set total count so providers can decide display behavior
+	for _, p := range registry {
+		switch v := p.(type) {
+		case interface{ SetTotal(int) }:
+			v.SetTotal(len(registry))
+		}
+	}
+
 	return registry
 }
