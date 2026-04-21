@@ -1,7 +1,7 @@
 package httputil
 
 import (
-	"ai-daemon/pkg/config"
+	"glm/pkg/config"
 	"net/http"
 	"net/url"
 	"time"

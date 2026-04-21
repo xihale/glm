@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ai-daemon/cmd"
+	"glm/cmd"
 )
 
 func main() {

@@ -4,16 +4,16 @@ import (
 	"fmt"
 	"os"
 
-	"ai-daemon/pkg/config"
+	"glm/pkg/config"
 
 	"github.com/spf13/cobra"
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "ai-daemon",
-	Short: "A system-level daemon for AI service quota management",
-	Long: `ai-daemon integrates GLM, Gemini CLI, and Antigravity into a unified 
-interface for quota monitoring and automated heartbeat management.`,
+	Use:   "glm",
+	Short: "A system-level daemon for GLM quota management",
+	Long: `glm manages GLM (ChatGLM) API quota monitoring and 
+automated heartbeat scheduling.`,
 	CompletionOptions: cobra.CompletionOptions{
 		DisableDefaultCmd: true,
 	},
@@ -29,6 +29,6 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(config.InitConfig)
 
-	rootCmd.PersistentFlags().StringVar(&config.CfgFile, "config", "", "config file (default is $HOME/.config/ai-daemon/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&config.CfgFile, "config", "", "config file (default is $HOME/.config/glm/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&config.Current.Proxy, "proxy", "", "HTTP/SOCKS proxy URL (e.g. http://localhost:1080)")
 }

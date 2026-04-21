@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"syscall"
 
-	"ai-daemon/pkg/config"
+	"glm/pkg/config"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -14,7 +14,7 @@ import (
 var authCmd = &cobra.Command{
 	Use:   "auth",
 	Short: "Manage authentication credentials",
-	Long:  `Manage API keys and session tokens for GLM, Gemini, and other providers.`,
+	Long:  `Manage API keys for GLM providers.`,
 }
 
 var setCmd = &cobra.Command{
@@ -47,48 +47,7 @@ var setGlmCmd = &cobra.Command{
 			fmt.Printf("  \033[31m[-] Error saving config: %v\033[0m\n", err)
 			return
 		}
-		fmt.Println("  \033[32m[+] GLM API Key saved securely.\033[0m\n")
-	},
-}
-
-var setGeminiCmd = &cobra.Command{
-	Use:   "gemini",
-	Short: "Set Gemini Web session cookies (Secure Prompt)",
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("\n\033[1;36mSet Gemini Web Cookies\033[0m\n")
-		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
-
-		fmt.Print("  [*] Enter __Secure-1PSID: ")
-		byte1PSID, err := term.ReadPassword(int(syscall.Stdin))
-		if err != nil {
-			fmt.Printf("\n  \033[31m[-] Error reading input: %v\033[0m\n", err)
-			return
-		}
-		fmt.Println()
-
-		fmt.Print("  [*] Enter __Secure-1PSIDTS: ")
-		byte1PSIDTS, err := term.ReadPassword(int(syscall.Stdin))
-		if err != nil {
-			fmt.Printf("\n  \033[31m[-] Error reading input: %v\033[0m\n", err)
-			return
-		}
-		fmt.Println()
-
-		psid := string(byte1PSID)
-		psidts := string(byte1PSIDTS)
-
-		if psid == "" || psidts == "" {
-			fmt.Println("  \033[33m[!] Session cookies cannot be empty.\033[0m")
-			return
-		}
-
-		viper.Set("gemini.secure_1psid", psid)
-		viper.Set("gemini.secure_1psidts", psidts)
-		if err := config.SaveConfig(); err != nil {
-			fmt.Printf("  \033[31m[-] Error saving config: %v\033[0m\n", err)
-			return
-		}
-		fmt.Println("  \033[32m[+] Gemini session cookies saved securely.\033[0m\n")
+		fmt.Println("  \033[32m[+] GLM API Key saved securely.\033[0m")
 	},
 }
 
@@ -96,5 +55,4 @@ func init() {
 	rootCmd.AddCommand(authCmd)
 	authCmd.AddCommand(setCmd)
 	setCmd.AddCommand(setGlmCmd)
-	setCmd.AddCommand(setGeminiCmd)
 }

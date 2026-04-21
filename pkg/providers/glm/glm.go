@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
-	"ai-daemon/pkg/config"
-	"ai-daemon/pkg/httputil"
-	"ai-daemon/pkg/providers/interfaces"
-	pkgutils "ai-daemon/pkg/utils"
+	"glm/pkg/config"
+	"glm/pkg/httputil"
+	"glm/pkg/providers/interfaces"
+	pkgutils "glm/pkg/utils"
 )
 
 const (
@@ -21,7 +20,8 @@ const (
 	QuotaEndpoint     = "/api/monitor/usage/quota/limit"
 	HeartbeatEndpoint = "/api/coding/paas/v4/chat/completions"
 	UserAgent         = "ClaudeCode/2.1.27"
-	ClientEnv         = "opencode-cli"
+	ClientEnv         = "claude-code"
+	HeartbeatModel    = "glm-4.7"
 )
 
 type Provider struct {
@@ -162,44 +162,37 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 	}, nil
 }
 
-func (p *Provider) Activate(w interface{}, debug bool, force bool) error {
-	var writer io.Writer
-	if w != nil {
-		if wr, ok := w.(io.Writer); ok {
-			writer = wr
-		}
-	}
-	if writer == nil {
-		writer = os.Stdout
-	}
-
+func (p *Provider) Activate(w interface{}, debug bool, force bool) (*interfaces.QuotaStatus, error) {
 	quota, err := p.GetQuota()
-	if err == nil {
+	if err == nil && !force {
 		timeStr := pkgutils.FormatTimeUntil(quota.ResetTime)
-		// For GLM, we only skip if it's not "0m" and not "Passed"
-		// This ensures that when it shows "0m", activation is always allowed.
-		if !force && timeStr != "0m" && timeStr != "Passed" {
-			q := pkgutils.ModelQuota{Remaining: float64(quota.Remaining), ResetTime: quota.ResetTime}
-			pkgutils.PrintSkipMessageWithWriter(writer, "General", q)
-			return nil
+		// When time until reset is "0m" or already passed, the reset
+		// hasn't taken effect yet. Sending a heartbeat now is wasteful
+		// — skip and tell the user to wait for the reset boundary.
+		if timeStr == "0m" || timeStr == "Passed" {
+			at := quota.ResetTime.Add(5 * time.Second).Local().Format("15:04:05")
+			fmt.Printf("%s \033[33mwaiting for reset\033[0m (reset at %s)\n", p.Name(), at)
+			return quota, nil
 		}
+
+		at := quota.ResetTime.Add(5 * time.Second).Local().Format("15:04:05")
+		fmt.Printf("%s skipped (%d%%, %s, reset at %s)\n", p.Name(), quota.Remaining, timeStr, at)
+		return quota, nil
 	}
 
-	fmt.Fprintf(writer, "  [*] Activating %-25s ... ", "General")
 	err = p.SendHeartbeat()
-
 	if err != nil {
-		pkgutils.FormatActivationErrorWithWriter(writer, err, debug)
+		pkgutils.FormatActivationError(err, debug)
 	} else {
-		fmt.Fprintf(writer, "\033[32m[+] Success\033[0m\n")
+		fmt.Printf("%s \033[32mactivated\033[0m\n", p.Name())
 	}
-	return nil
+	return quota, nil
 }
 
 func (p *Provider) SendHeartbeat() error {
 	payload := map[string]interface{}{
-		"model":      "glm-4.7",
-		"messages":   []map[string]string{{"role": "user", "content": "ping"}},
+		"model":      HeartbeatModel,
+		"messages":   []map[string]string{{"role": "user", "content": "hello"}},
 		"max_tokens": 5,
 	}
 	body, _ := json.Marshal(payload)

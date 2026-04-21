@@ -5,13 +5,12 @@ import (
 )
 
 type QuotaStatus struct {
-	Used        int64
-	Limit       int64
-	Remaining   int64
-	ResetTime   time.Time
-	Type        string
-	Raw         string
-	CliQuotaRaw string // Deprecated: Moved to separate provider
+	Used      int64
+	Limit     int64
+	Remaining int64
+	ResetTime time.Time
+	Type      string
+	Raw       string
 }
 
 type Provider interface {
@@ -19,6 +18,6 @@ type Provider interface {
 	ID() string
 	Authenticate() error
 	GetQuota() (*QuotaStatus, error)
-	Activate(w interface{}, debug bool, force bool) error
+	Activate(w interface{}, debug bool, force bool) (*QuotaStatus, error)
 	SetDebug(debug bool)
 }

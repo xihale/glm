@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	CronIdentifier   = "# AI-Daemon Scheduled Task"
-	RebootIdentifier = "# AI-Daemon Boot Recovery"
+	CronIdentifier   = "# glm Scheduled Task"
+	RebootIdentifier = "# glm Boot Recovery"
 )
 
 func ScheduleNextRun(nextRun time.Time, execPath string, configPath string) error {

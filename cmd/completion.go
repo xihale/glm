@@ -15,13 +15,13 @@ var completionCmd = &cobra.Command{
 	Long: `To load completions:
 
 Bash:
-  $ source <(ai-daemon completion bash)
+  $ source <(glm completion bash)
 
   # To load completions for each session, execute once:
   # Linux:
-  $ ai-daemon completion bash > /etc/bash_completion.d/ai-daemon
+  $ glm completion bash > /etc/bash_completion.d/glm
   # macOS:
-  $ ai-daemon completion bash > /usr/local/etc/bash_completion.d/ai-daemon
+  $ glm completion bash > /usr/local/etc/bash_completion.d/glm
 
 Zsh:
   # If shell completion is not already enabled in your environment,
@@ -30,21 +30,21 @@ Zsh:
   $ echo "autoload -U compinit; compinit" >> ~/.zshrc
 
   # To load completions for each session, execute once:
-  $ ai-daemon completion zsh > "${fpath[1]}/_ai-daemon"
+  $ glm completion zsh > "${fpath[1]}/_glm"
 
   # You will need to start a new shell for this setup to take effect.
 
 fish:
-  $ ai-daemon completion fish | source
+  $ glm completion fish | source
 
   # To load completions for each session, execute once:
-  $ ai-daemon completion fish > ~/.config/fish/completions/ai-daemon.fish
+  $ glm completion fish > ~/.config/fish/completions/glm.fish
 
 PowerShell:
-  PS> ai-daemon completion powershell | Out-String | Invoke-Expression
+  PS> glm completion powershell | Out-String | Invoke-Expression
 
   # To load completions for each session, execute once:
-  PS> ai-daemon completion powershell > ai-daemon.ps1
+  PS> glm completion powershell > glm.ps1
   # and source this file from your PowerShell profile.
 `,
 	DisableFlagsInUseLine: true,
@@ -141,21 +141,21 @@ func getCompletionPath(shell string) string {
 		if xdgData == "" {
 			xdgData = filepath.Join(home, ".local", "share")
 		}
-		return filepath.Join(xdgData, "bash-completion", "completions", "ai-daemon")
+		return filepath.Join(xdgData, "bash-completion", "completions", "glm")
 	case "zsh":
-		return filepath.Join(home, ".zfunc", "_ai-daemon")
+		return filepath.Join(home, ".zfunc", "_glm")
 	case "fish":
 		xdgConfig := os.Getenv("XDG_CONFIG_HOME")
 		if xdgConfig == "" {
 			xdgConfig = filepath.Join(home, ".config")
 		}
-		return filepath.Join(xdgConfig, "fish", "completions", "ai-daemon.fish")
+		return filepath.Join(xdgConfig, "fish", "completions", "glm.fish")
 	case "powershell":
 		xdgConfig := os.Getenv("XDG_CONFIG_HOME")
 		if xdgConfig == "" {
 			xdgConfig = filepath.Join(home, ".config")
 		}
-		return filepath.Join(xdgConfig, "powershell", "ai-daemon.ps1")
+		return filepath.Join(xdgConfig, "powershell", "glm.ps1")
 	}
 	return ""
 }

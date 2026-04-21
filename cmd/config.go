@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"ai-daemon/pkg/config"
+	"glm/pkg/config"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -15,17 +15,6 @@ var (
 	allowedGLMFields = map[string]bool{
 		"api_key":  true,
 		"base_url": true,
-	}
-
-	allowedGeminiFields = map[string]bool{
-		"disable_antigravity": true,
-	}
-
-	allowedGenericFields = map[string]bool{
-		"api_key":             true,
-		"base_url":            true,
-		"enabled":             true,
-		"disable_antigravity": true,
 	}
 )
 
@@ -50,13 +39,9 @@ Supported keys:
     glm.{name}.api_key    - GLM API key
     glm.{name}.base_url   - GLM base URL
 
-  Gemini-specific:
-    gemini.{name}.disable_antigravity - Disable antigravity (true/false)
-
 Examples:
   config set proxy http://127.0.0.1:1080
-  config set glm.glm.api_key sk-xxxxx
-  config set gemini.gemini.disable_antigravity true`,
+  config set glm.glm.api_key sk-xxxxx`,
 	Args:              cobra.ExactArgs(2),
 	ValidArgsFunction: completeConfigKey,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -171,12 +156,8 @@ func getProviderFields(providerType string) []string {
 		for f := range allowedGLMFields {
 			fields = append(fields, f)
 		}
-	case "gemini":
-		for f := range allowedGeminiFields {
-			fields = append(fields, f)
-		}
 	default:
-		for f := range allowedGenericFields {
+		for f := range allowedGLMFields {
 			fields = append(fields, f)
 		}
 	}
@@ -211,13 +192,7 @@ func setConfigValue(key, value string) error {
 
 		p := &config.Current.Providers[providerIdx]
 
-		allowedFields := allowedGenericFields
-		switch p.Type {
-		case "glm":
-			allowedFields = allowedGLMFields
-		case "gemini":
-			allowedFields = allowedGeminiFields
-		}
+		allowedFields := allowedGLMFields
 
 		if !allowedFields[field] {
 			return fmt.Errorf("field '%s' is not configurable for %s providers. Use 'config set --help' to see available fields", field, p.Type)
@@ -233,14 +208,6 @@ func setConfigValue(key, value string) error {
 				p.Enabled = true
 			} else if value == "false" || value == "0" {
 				p.Enabled = false
-			} else {
-				return fmt.Errorf("invalid boolean value: %s (use true/false)", value)
-			}
-		case "disable_antigravity":
-			if value == "true" || value == "1" {
-				p.DisableAntigravity = true
-			} else if value == "false" || value == "0" {
-				p.DisableAntigravity = false
 			} else {
 				return fmt.Errorf("invalid boolean value: %s (use true/false)", value)
 			}
