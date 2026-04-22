@@ -5,12 +5,10 @@ import (
 	"time"
 
 	"glm/pkg/providers"
-	"glm/pkg/utils"
+	pkgutils "glm/pkg/utils"
 
 	"github.com/spf13/cobra"
 )
-
-const resetBuffer = 5 * time.Second
 
 var activateCmd = &cobra.Command{
 	Use:   "activate",
@@ -52,10 +50,10 @@ var activateCmd = &cobra.Command{
 		}
 
 		if !earliestReset.IsZero() {
-			buf := earliestReset.Add(resetBuffer)
+			buf := earliestReset.Add(pkgutils.ResetBuffer)
 			fmt.Printf("Next reset: \033[1;32m%s\033[0m (%s)\n",
 				buf.Format("15:04:05"),
-				utils.FormatTimeUntil(buf))
+				pkgutils.FormatTimeUntil(buf))
 		}
 	},
 }

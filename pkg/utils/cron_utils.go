@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"bytes"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -22,7 +23,7 @@ func ScheduleNextRun(nextRun time.Time, execPath string, configPath string) erro
 	var newLines []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.Contains(trimmed, CronIdentifier) || strings.Contains(trimmed, RebootIdentifier) {
+		if strings.Contains(trimmed, CronIdentifier) || strings.Contains(trimmed, RebootIdentifier) {
 			continue
 		}
 		newLines = append(newLines, line)
@@ -57,7 +58,12 @@ func ScheduleNextRun(nextRun time.Time, execPath string, configPath string) erro
 
 	cmd := exec.Command("crontab", "-")
 	cmd.Stdin = strings.NewReader(newCrontab)
-	return cmd.Run()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("crontab update failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 func RemoveScheduledRun() error {

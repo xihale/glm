@@ -169,14 +169,13 @@ func (p *Provider) Activate(w interface{}, debug bool, force bool) (*interfaces.
 		// When time until reset is "0m" or already passed, the reset
 		// hasn't taken effect yet. Sending a heartbeat now is wasteful
 		// — skip and tell the user to wait for the reset boundary.
+		resetAt := quota.ResetTime.Add(pkgutils.ResetBuffer).Local().Format("15:04:05")
 		if timeStr == "0m" || timeStr == "Passed" {
-			at := quota.ResetTime.Add(5 * time.Second).Local().Format("15:04:05")
-			fmt.Printf("%s \033[33mwaiting for reset\033[0m (reset at %s)\n", p.Name(), at)
+			fmt.Printf("%s \033[33mwaiting for reset\033[0m (reset at %s)\n", p.Name(), resetAt)
 			return quota, nil
 		}
 
-		at := quota.ResetTime.Add(5 * time.Second).Local().Format("15:04:05")
-		fmt.Printf("%s skipped (%d%%, %s, reset at %s)\n", p.Name(), quota.Remaining, timeStr, at)
+		fmt.Printf("%s skipped (%d%%, %s, reset at %s)\n", p.Name(), quota.Remaining, timeStr, resetAt)
 		return quota, nil
 	}
 
