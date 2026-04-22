@@ -1,7 +1,7 @@
 package main
 
 import (
-	"glm/cmd"
+	"github.com/xihale/glm/cmd"
 )
 
 func main() {

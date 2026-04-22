@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"glm/pkg/providers"
-	pkgutils "glm/pkg/utils"
+	"github.com/xihale/glm/pkg/providers"
+	pkgutils "github.com/xihale/glm/pkg/utils"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

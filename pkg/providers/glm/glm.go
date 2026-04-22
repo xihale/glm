@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"time"
 
-	"glm/pkg/config"
-	"glm/pkg/httputil"
-	"glm/pkg/providers/interfaces"
-	pkgutils "glm/pkg/utils"
+	"github.com/xihale/glm/pkg/config"
+	"github.com/xihale/glm/pkg/httputil"
+	"github.com/xihale/glm/pkg/providers/interfaces"
+	pkgutils "github.com/xihale/glm/pkg/utils"
 )
 
 const (

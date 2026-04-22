@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"glm/pkg/config"
-	"glm/pkg/providers/glm"
-	"glm/pkg/providers/interfaces"
+	"github.com/xihale/glm/pkg/config"
+	"github.com/xihale/glm/pkg/providers/glm"
+	"github.com/xihale/glm/pkg/providers/interfaces"
 )
 
 // LoadProvidersFromConfig creates provider instances based on the global configuration

@@ -1,4 +1,4 @@
-module glm
+module github.com/xihale/glm
 
 go 1.25.6
 

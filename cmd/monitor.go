@@ -3,9 +3,9 @@ package cmd
 import (
 	"fmt"
 
-	"glm/pkg/providers"
-	"glm/pkg/providers/interfaces"
-	"glm/pkg/utils"
+	"github.com/xihale/glm/pkg/providers"
+	"github.com/xihale/glm/pkg/providers/interfaces"
+	"github.com/xihale/glm/pkg/utils"
 
 	"github.com/spf13/cobra"
 )

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"glm/pkg/config"
+	"github.com/xihale/glm/pkg/config"
 
 	"github.com/spf13/cobra"
 )

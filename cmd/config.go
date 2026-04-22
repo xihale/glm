@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"glm/pkg/config"
+	"github.com/xihale/glm/pkg/config"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

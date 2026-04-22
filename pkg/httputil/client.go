@@ -1,7 +1,7 @@
 package httputil
 
 import (
-	"glm/pkg/config"
+	"github.com/xihale/glm/pkg/config"
 	"net/http"
 	"net/url"
 	"time"
