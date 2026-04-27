@@ -40,25 +40,21 @@ func init() {
 	rootCmd.AddCommand(stopCmd)
 }
 
-// daemonPaths resolves the installed binary path and config path for scheduling.
-// Returns (installedPath, configPath, error).
+// daemonPaths resolves the current executable path and config path for scheduling.
+// Returns (binaryPath, configPath, error).
 func daemonPaths() (string, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
 
-	installedPath := filepath.Join(home, ".local", "bin", "glm")
-	info, err := os.Stat(installedPath)
-	if os.IsNotExist(err) {
-		return "", "", fmt.Errorf("glm is not installed in %s — please run 'glm install' first", installedPath)
-	}
+	execPath, err := os.Executable()
 	if err != nil {
-		return "", "", fmt.Errorf("cannot access %s: %w", installedPath, err)
+		return "", "", fmt.Errorf("cannot determine current executable path: %w", err)
 	}
-	// Verify the binary is actually executable.
-	if info.Mode()&0111 == 0 {
-		return "", "", fmt.Errorf("%s exists but is not executable — run 'chmod +x %s'", installedPath, installedPath)
+	resolved, err := filepath.EvalSymlinks(execPath)
+	if err != nil {
+		resolved = execPath
 	}
 
 	configPath := viper.ConfigFileUsed()
@@ -66,24 +62,7 @@ func daemonPaths() (string, string, error) {
 		configPath = filepath.Join(home, ".config", "glm", "config.yaml")
 	}
 
-	return installedPath, configPath, nil
-}
-
-// warnIfDifferentBinary checks whether the running binary differs from the
-// installed one and prints a warning if so.
-func warnIfDifferentBinary(installedPath string) {
-	currentExec, err := os.Executable()
-	if err != nil {
-		return
-	}
-	realInstalled, err1 := filepath.EvalSymlinks(installedPath)
-	realCurrent, err2 := filepath.EvalSymlinks(currentExec)
-	// Only warn if both symlinks resolved successfully AND the paths differ.
-	// If EvalSymlinks fails (e.g. dangling symlink), skip the warning to avoid false positives.
-	if err1 == nil && err2 == nil && realInstalled != realCurrent {
-		fmt.Printf("[!] Warning: You are running %s\n", currentExec)
-		fmt.Printf("    The scheduled task will use %s\n", installedPath)
-	}
+	return resolved, configPath, nil
 }
 
 // warnIfSchedulerConflict warns if both systemd service and crontab are active,
@@ -154,19 +133,18 @@ func runDaemonOneShot() {
 
 	nextRun := resolveNextRun(earliestReset)
 
-	installedPath, configPath, err := daemonPaths()
+	binaryPath, configPath, err := daemonPaths()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
-	warnIfDifferentBinary(installedPath)
 	warnIfSchedulerConflict()
 
 	fmt.Printf("Scheduling next run: %s\n",
 		nextRun.Local().Format("2006-01-02 15:04:05"))
 
-	if err := pkgutils.ScheduleNextRun(nextRun, installedPath, configPath); err != nil {
+	if err := pkgutils.ScheduleNextRun(nextRun, binaryPath, configPath); err != nil {
 		fmt.Printf("Error scheduling next run: %v\n", err)
 	}
 }

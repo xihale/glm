@@ -19,12 +19,16 @@ var installServiceCmd = &cobra.Command{
 	Short: "Install systemd user service",
 	Run: func(cmd *cobra.Command, args []string) {
 		home, _ := os.UserHomeDir()
-		execPath := filepath.Join(home, ".local", "bin", "glm")
-
-		if _, err := os.Stat(execPath); os.IsNotExist(err) {
-			fmt.Printf("Error: glm is not installed. Run 'glm install' first.\n")
+		execPath, err := os.Executable()
+		if err != nil {
+			fmt.Printf("Error: cannot determine current executable: %v\n", err)
 			os.Exit(1)
 		}
+		resolved, err := filepath.EvalSymlinks(execPath)
+		if err != nil {
+			resolved = execPath
+		}
+		execPath = resolved
 
 		serviceDir := filepath.Join(home, ".config", "systemd", "user")
 		if err := os.MkdirAll(serviceDir, 0755); err != nil {
