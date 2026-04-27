@@ -162,21 +162,44 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 	}, nil
 }
 
-func (p *Provider) Activate(w interface{}, debug bool, force bool) (*interfaces.QuotaStatus, error) {
+// Activate sends a heartbeat to commit a new quota cycle.
+//
+// The server behavior is:
+//   - When a cycle resets, the server shows Remaining=100% with a ResetTime in the
+//     future, but the new cycle does NOT truly start until the first request (commit)
+//     is sent. Until then the server keeps pushing the start/reset time forward.
+//   - After activation, the server returns Remaining=100% with a new ResetTime ~5h
+//     in the future (same data, but the cycle is now truly active).
+//   - When Remaining < 100%, the cycle is in use — sending heartbeat is useless.
+//
+// Since uncommitted and committed states return identical data (Remaining=100% +
+// future ResetTime), Activate cannot distinguish them from quota alone. The daemon
+// handles this by scheduling itself right after the expected reset time.
+//
+// In non-force mode: skip if Remaining < 100% (in use, heartbeat is useless).
+// Otherwise (Remaining == 100%): send heartbeat to ensure the cycle is committed.
+// In force mode: always sends heartbeat.
+func (p *Provider) Activate(w io.Writer, debug bool, force bool) (*interfaces.QuotaStatus, error) {
 	quota, err := p.GetQuota()
-	if err == nil && !force {
-		timeStr := pkgutils.FormatTimeUntil(quota.ResetTime)
-		// When time until reset is "0m" or already passed, the reset
-		// hasn't taken effect yet. Sending a heartbeat now is wasteful
-		// — skip and tell the user to wait for the reset boundary.
-		resetAt := quota.ResetTime.Add(pkgutils.ResetBuffer).Local().Format("15:04:05")
-		if timeStr == "0m" || timeStr == "Passed" {
-			fmt.Printf("%s \033[33mwaiting for reset\033[0m (reset at %s)\n", p.Name(), resetAt)
+	if err != nil {
+		// Quota check failed — try heartbeat anyway as a fallback.
+		hbErr := p.SendHeartbeat()
+		if hbErr != nil {
+			pkgutils.FormatActivationError(hbErr, debug)
+			return nil, err
+		}
+		fmt.Printf("%s \033[32mactivated\033[0m (quota check failed, heartbeat sent)\n", p.Name())
+		return quota, nil
+	}
+
+	if !force {
+		// Remaining < 100% means the cycle is in use — heartbeat is useless.
+		if quota.Remaining < 100 {
+			timeStr := pkgutils.FormatTimeUntil(quota.ResetTime)
+			resetAt := quota.ResetTime.Local().Format("15:04:05")
+			fmt.Printf("%s in use (%d%%, %s, reset at %s)\n", p.Name(), quota.Remaining, timeStr, resetAt)
 			return quota, nil
 		}
-
-		fmt.Printf("%s skipped (%d%%, %s, reset at %s)\n", p.Name(), quota.Remaining, timeStr, resetAt)
-		return quota, nil
 	}
 
 	err = p.SendHeartbeat()
@@ -191,7 +214,7 @@ func (p *Provider) Activate(w interface{}, debug bool, force bool) (*interfaces.
 func (p *Provider) SendHeartbeat() error {
 	payload := map[string]interface{}{
 		"model":      HeartbeatModel,
-		"messages":   []map[string]string{{"role": "user", "content": "hello"}},
+		"messages":   []map[string]string{{"role": "user", "content": "commit"}},
 		"max_tokens": 5,
 	}
 	body, _ := json.Marshal(payload)
@@ -211,8 +234,17 @@ func (p *Provider) SendHeartbeat() error {
 	return nil
 }
 
+// setHeaders applies common headers to all requests.
+// Mirrors headers used by CLI coding agents like ClaudeCode/Forge:
+//   - Authorization: Bearer <api_key> (standard OpenAI-compatible auth)
+//   - User-Agent: identifies the client
+//   - X-Client-Environment: identifies the client environment
+//   - Connection: keep-alive for connection reuse
+//   - Accept: application/json
 func (p *Provider) setHeaders(req *http.Request) {
-	req.Header.Set("Authorization", p.APIKey)
+	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("X-Client-Environment", ClientEnv)
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Accept", "application/json")
 }

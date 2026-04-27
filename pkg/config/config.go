@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
+	"go.yaml.in/yaml/v3"
 )
 
 type Config struct {
@@ -57,7 +58,16 @@ func InitConfig() {
 
 	viper.AutomaticEnv()
 
-	if err := viper.ReadInConfig(); err == nil {
+	if err := viper.ReadInConfig(); err != nil {
+		// If the user explicitly specified a config file, any error is fatal.
+		if CfgFile != "" {
+			fmt.Printf("Error reading config file %s: %v\n", CfgFile, err)
+			os.Exit(1)
+		}
+		// For the default path, only warn on non-NotExist errors (e.g. permission denied, malformed).
+		if !os.IsNotExist(err) {
+			fmt.Printf("Warning: error reading config file: %v\n", err)
+		}
 	}
 
 	if err := viper.Unmarshal(&Current, func(c *mapstructure.DecoderConfig) {
@@ -103,12 +113,14 @@ func SaveConfig() error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	if err := viper.WriteConfigAs(configFile); err != nil {
-		return fmt.Errorf("failed to write config: %w", err)
+	// Marshal directly from the Current struct to avoid viper state inconsistency.
+	data, err := yaml.Marshal(Current)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.Chmod(configFile, 0600); err != nil {
-		return fmt.Errorf("failed to set secure permissions: %w", err)
+	if err := os.WriteFile(configFile, data, 0600); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
 	}
 
 	return nil

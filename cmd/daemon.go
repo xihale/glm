@@ -3,7 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/xihale/glm/pkg/providers"
@@ -47,8 +49,16 @@ func daemonPaths() (string, string, error) {
 	}
 
 	installedPath := filepath.Join(home, ".local", "bin", "glm")
-	if _, err := os.Stat(installedPath); os.IsNotExist(err) {
+	info, err := os.Stat(installedPath)
+	if os.IsNotExist(err) {
 		return "", "", fmt.Errorf("glm is not installed in %s — please run 'glm install' first", installedPath)
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("cannot access %s: %w", installedPath, err)
+	}
+	// Verify the binary is actually executable.
+	if info.Mode()&0111 == 0 {
+		return "", "", fmt.Errorf("%s exists but is not executable — run 'chmod +x %s'", installedPath, installedPath)
 	}
 
 	configPath := viper.ConfigFileUsed()
@@ -68,9 +78,23 @@ func warnIfDifferentBinary(installedPath string) {
 	}
 	realInstalled, err1 := filepath.EvalSymlinks(installedPath)
 	realCurrent, err2 := filepath.EvalSymlinks(currentExec)
-	if err1 != nil || err2 != nil || realInstalled != realCurrent {
+	// Only warn if both symlinks resolved successfully AND the paths differ.
+	// If EvalSymlinks fails (e.g. dangling symlink), skip the warning to avoid false positives.
+	if err1 == nil && err2 == nil && realInstalled != realCurrent {
 		fmt.Printf("[!] Warning: You are running %s\n", currentExec)
 		fmt.Printf("    The scheduled task will use %s\n", installedPath)
+	}
+}
+
+// warnIfSchedulerConflict warns if both systemd service and crontab are active,
+// which would cause duplicate daemon runs.
+func warnIfSchedulerConflict() {
+	// Check if systemd user service is active.
+	out, err := exec.Command("systemctl", "--user", "is-active", "glm").Output()
+	if err == nil && strings.TrimSpace(string(out)) == "active" {
+		fmt.Println("[!] Warning: systemd service 'glm' is active.")
+		fmt.Println("    Running both systemd and crontab scheduling may cause duplicate runs.")
+		fmt.Println("    Consider disabling one: systemctl --user stop glm && systemctl --user disable glm")
 	}
 }
 
@@ -100,17 +124,8 @@ func activateProviders() time.Time {
 			}
 		}
 
-		// Only activate if quota is not full or reset time has passed
-		needsActivation := quota.Remaining < 100 ||
-			quota.ResetTime.IsZero() ||
-			!quota.ResetTime.After(now)
-
-		if !needsActivation {
-			at := quota.ResetTime.Local().Format("15:04:05")
-			fmt.Printf("%s quota full (%d%%), next reset at %s. Skipping.\n", p.Name(), quota.Remaining, at)
-			continue
-		}
-
+		// Activate handles its own quota check internally (skip if still active).
+		// We only skip here if quota is clearly still active to avoid redundant work.
 		if _, err := p.Activate(nil, false, false); err != nil {
 			fmt.Printf("%s activation error: %v\n", p.Name(), err)
 		}
@@ -146,6 +161,7 @@ func runDaemonOneShot() {
 	}
 
 	warnIfDifferentBinary(installedPath)
+	warnIfSchedulerConflict()
 
 	fmt.Printf("Scheduling next run: %s\n",
 		nextRun.Local().Format("2006-01-02 15:04:05"))

@@ -13,10 +13,29 @@ const (
 	RebootIdentifier = "# glm Boot Recovery"
 )
 
+// isNoCrontabError returns true if the error from "crontab -l" indicates
+// that the user simply has no crontab (as opposed to a real system error).
+func isNoCrontabError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// "crontab -l" returns exit code 1 with "no crontab for <user>" when empty.
+	// This is a normal condition, not a real error.
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no crontab")
+}
+
 func ScheduleNextRun(nextRun time.Time, execPath string, configPath string) error {
 	out, err := exec.Command("crontab", "-l").Output()
 	var lines []string
-	if err == nil {
+	if err != nil {
+		// Distinguish between "no crontab" (normal) and a real error.
+		if !isNoCrontabError(err) {
+			return fmt.Errorf("failed to read crontab: %w", err)
+		}
+		// No existing crontab — start with empty lines.
+		lines = []string{}
+	} else {
 		lines = strings.Split(string(out), "\n")
 	}
 

@@ -1,6 +1,7 @@
 package interfaces
 
 import (
+	"io"
 	"time"
 )
 
@@ -18,6 +19,6 @@ type Provider interface {
 	ID() string
 	Authenticate() error
 	GetQuota() (*QuotaStatus, error)
-	Activate(w interface{}, debug bool, force bool) (*QuotaStatus, error)
+	Activate(w io.Writer, debug bool, force bool) (*QuotaStatus, error)
 	SetDebug(debug bool)
 }

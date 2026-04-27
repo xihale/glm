@@ -87,11 +87,14 @@ Description=GLM Heartbeat Service
 After=network.target
 
 [Service]
-ExecStart={{.ExecPath}} daemon
+ExecStart={{.ExecPath}} daemon --config %h/.config/glm/config.yaml
 Restart=always
 RestartSec=60
 StandardOutput=journal
 StandardError=journal
+
+# Note: Do not enable both systemd service and crontab scheduling.
+# Use "systemctl --user is-enabled glm" and "crontab -l" to check.
 
 [Install]
 WantedBy=default.target
