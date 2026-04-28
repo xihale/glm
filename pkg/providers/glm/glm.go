@@ -182,14 +182,7 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 func (p *Provider) Activate(w io.Writer, debug bool, force bool) (*interfaces.QuotaStatus, error) {
 	quota, err := p.GetQuota()
 	if err != nil {
-		// Quota check failed — try heartbeat anyway as a fallback.
-		hbErr := p.SendHeartbeat()
-		if hbErr != nil {
-			pkgutils.FormatActivationError(hbErr, debug)
-			return nil, err
-		}
-		fmt.Printf("%s \033[32mactivated\033[0m (quota check failed, heartbeat sent)\n", p.Name())
-		return quota, nil
+		return nil, err
 	}
 
 	if !force {
