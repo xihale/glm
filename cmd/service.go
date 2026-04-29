@@ -93,21 +93,52 @@ var uninstallServiceCmd = &cobra.Command{
 	},
 }
 
+var stopServiceCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop and disable systemd user timer",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Printf("[%s] service stop: disabling glm.timer.\n", time.Now().Local().Format("2006-01-02 15:04:05"))
+		if err := runSystemctlUser("disable", "--now", systemdTimerUnit); err != nil {
+			return err
+		}
+		fmt.Println("glm.timer stopped and disabled.")
+		return nil
+	},
+}
+
 var serviceRunCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Run scheduled activation (called by systemd timer)",
-	Long:  `Run one activation cycle for all providers. Intended to be called by systemd timer.`,
+	Short: "Run activation service",
+	Long: `Run one activation service cycle.
+If schedule is configured, schedule guard is applied before activation.
+If no schedule is configured, activation runs immediately.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		debug, _ := cmd.Flags().GetBool("debug")
-		if !waitForScheduledReset(debug) {
-			return nil
-		}
-		runActivation(debug, false)
+		runServiceActivation(debug)
 		return nil
 	},
 }
 
 const scheduleResetWaitThreshold = 10 * time.Minute
+
+func runServiceActivation(debug bool) {
+	if config.Current.Schedule.IsEmpty() {
+		fmt.Printf("[%s] service run: mode=auto; no schedule configured; running activation immediately.\n", time.Now().Local().Format("2006-01-02 15:04:05"))
+		runActivation(debug, false)
+		return
+	}
+
+	fmt.Printf("[%s] service run: mode=schedule; schedule=%s [%s]; applying schedule guard.\n",
+		time.Now().Local().Format("2006-01-02 15:04:05"),
+		config.Current.Schedule.Timezone,
+		strings.Join(config.Current.Schedule.Times, ", "))
+	if !waitForScheduledReset(debug) {
+		fmt.Printf("[%s] service run: mode=schedule; activation skipped; waiting for next schedule.\n", time.Now().Local().Format("2006-01-02 15:04:05"))
+		return
+	}
+	fmt.Printf("[%s] service run: mode=schedule; running activation.\n", time.Now().Local().Format("2006-01-02 15:04:05"))
+	runActivation(debug, false)
+}
 
 func waitForScheduledReset(debug bool) bool {
 	earliestReset := collectEarliestReset(debug)
@@ -137,6 +168,7 @@ func init() {
 	rootCmd.AddCommand(serviceCmd)
 	serviceCmd.AddCommand(installServiceCmd)
 	serviceCmd.AddCommand(uninstallServiceCmd)
+	serviceCmd.AddCommand(stopServiceCmd)
 	serviceCmd.AddCommand(serviceRunCmd)
 	serviceRunCmd.Flags().Bool("debug", false, "Show raw API response")
 }

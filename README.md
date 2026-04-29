@@ -14,6 +14,8 @@ glm schedule set +8 09:00 # set daily activation schedule
 glm schedule show         # show schedule
 glm schedule clear        # clear schedule
 glm service install       # install systemd user service/timer
+glm service run           # run one activation cycle; logs mode=auto or mode=schedule
+glm service stop          # stop and disable systemd user timer
 glm service uninstall     # remove systemd user service/timer
 ```
 
