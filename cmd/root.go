@@ -11,9 +11,8 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "glm",
-	Short: "A system-level daemon for GLM quota management",
-	Long: `glm manages GLM (ChatGLM) API quota monitoring and 
-automated heartbeat scheduling.`,
+	Short: "GLM quota monitoring and activation tool",
+	Long:  `glm manages GLM quota monitoring and scheduled activation.`,
 	CompletionOptions: cobra.CompletionOptions{
 		DisableDefaultCmd: true,
 	},
