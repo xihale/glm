@@ -3,7 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/xihale/glm/pkg/config"
 
@@ -15,6 +17,11 @@ var (
 	allowedGLMFields = map[string]bool{
 		"api_key":  true,
 		"base_url": true,
+	}
+	allowedDaemonFields = map[string]bool{
+		"activation_retry.max_attempts":  true,
+		"activation_retry.initial_delay": true,
+		"activation_retry.delay_step":    true,
 	}
 )
 
@@ -29,11 +36,15 @@ var configSetCmd = &cobra.Command{
 	Long: `Set a configuration value.
 
 Supported keys:
-  proxy                   - Set HTTP/SOCKS proxy
+  proxy                                   - Set HTTP/SOCKS proxy
 
-  {type}.{name}.api_key   - Set provider API key
-  {type}.{name}.base_url  - Set provider base URL
-  {type}.{name}.enabled   - Enable/disable provider (true/false)
+  daemon.activation_retry.max_attempts    - Total activation attempts including the first run
+  daemon.activation_retry.initial_delay   - First retry delay (Go duration, e.g. 5s)
+  daemon.activation_retry.delay_step      - Arithmetic increment between retries
+
+  {type}.{name}.api_key                   - Set provider API key
+  {type}.{name}.base_url                  - Set provider base URL
+  {type}.{name}.enabled                   - Enable/disable provider (true/false)
 
   GLM-specific:
     glm.{name}.api_key    - GLM API key
@@ -41,6 +52,8 @@ Supported keys:
 
 Examples:
   config set proxy http://127.0.0.1:1080
+  config set daemon.activation_retry.max_attempts 4
+  config set daemon.activation_retry.initial_delay 5s
   config set glm.glm.api_key sk-xxxxx`,
 	Args:              cobra.ExactArgs(2),
 	ValidArgsFunction: completeConfigKey,
@@ -74,7 +87,7 @@ func completeConfigKey(cmd *cobra.Command, args []string, toComplete string) ([]
 	parts := strings.Split(current, ".")
 
 	if len(parts) == 1 || (len(parts) == 2 && toComplete[len(toComplete)-1] != '.') {
-		suggestions := []string{"proxy"}
+		suggestions := []string{"proxy", "daemon."}
 
 		providerTypes := make(map[string]bool)
 		for _, p := range config.Current.Providers {
@@ -98,6 +111,17 @@ func completeConfigKey(cmd *cobra.Command, args []string, toComplete string) ([]
 	}
 
 	if len(parts) == 2 || (len(parts) == 3 && toComplete[len(toComplete)-1] != '.') {
+		if parts[0] == "daemon" {
+			suggestions := []string{}
+			for field := range allowedDaemonFields {
+				fullKey := "daemon." + field
+				if strings.HasPrefix(fullKey, toComplete) {
+					suggestions = append(suggestions, fullKey)
+				}
+			}
+			return suggestions, cobra.ShellCompDirectiveNoSpace | cobra.ShellCompDirectiveNoFileComp
+		}
+
 		providerType := parts[0]
 
 		suggestions := []string{}
@@ -127,6 +151,17 @@ func completeConfigKey(cmd *cobra.Command, args []string, toComplete string) ([]
 	}
 
 	if len(parts) >= 3 {
+		if parts[0] == "daemon" {
+			suggestions := []string{}
+			for field := range allowedDaemonFields {
+				fullKey := "daemon." + field
+				if strings.HasPrefix(fullKey, toComplete) {
+					suggestions = append(suggestions, fullKey)
+				}
+			}
+			return suggestions, cobra.ShellCompDirectiveNoFileComp
+		}
+
 		suggestions := []string{}
 
 		for _, p := range config.Current.Providers {
@@ -169,7 +204,38 @@ func setConfigValue(key, value string) error {
 	parts := strings.Split(key, ".")
 
 	if len(parts) == 1 && parts[0] == "proxy" {
+		config.Current.Proxy = value
 		viper.Set("proxy", value)
+		return nil
+	}
+
+	if len(parts) == 3 && parts[0] == "daemon" && parts[1] == "activation_retry" {
+		field := parts[2]
+		if !allowedDaemonFields[parts[1]+"."+field] {
+			return fmt.Errorf("field '%s' is not configurable for daemon settings", field)
+		}
+
+		retry := &config.Current.Daemon.ActivationRetry
+		switch field {
+		case "max_attempts":
+			maxAttempts, err := strconv.Atoi(value)
+			if err != nil {
+				return fmt.Errorf("invalid integer value: %s", value)
+			}
+			retry.MaxAttempts = maxAttempts
+		case "initial_delay":
+			if _, err := time.ParseDuration(value); err != nil {
+				return fmt.Errorf("invalid duration value: %s", value)
+			}
+			retry.InitialDelay = value
+		case "delay_step":
+			if _, err := time.ParseDuration(value); err != nil {
+				return fmt.Errorf("invalid duration value: %s", value)
+			}
+			retry.DelayStep = value
+		}
+
+		viper.Set("daemon", config.Current.Daemon)
 		return nil
 	}
 

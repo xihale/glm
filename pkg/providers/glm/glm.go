@@ -198,9 +198,10 @@ func (p *Provider) Activate(w io.Writer, debug bool, force bool) (*interfaces.Qu
 	err = p.SendHeartbeat()
 	if err != nil {
 		pkgutils.FormatActivationError(err, debug)
-	} else {
-		fmt.Printf("%s \033[32mactivated\033[0m\n", p.Name())
+		return quota, err
 	}
+
+	fmt.Printf("%s \033[32mactivated\033[0m\n", p.Name())
 	return quota, nil
 }
 

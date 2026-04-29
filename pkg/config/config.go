@@ -15,6 +15,7 @@ type Config struct {
 	Proxy     string           `mapstructure:"proxy" json:"proxy" yaml:"proxy,omitempty"`
 	GLM       GLMConfig        `mapstructure:"glm" json:"glm" yaml:"glm,omitempty"`
 	Providers []ProviderConfig `mapstructure:"providers" json:"providers" yaml:"providers,omitempty"`
+	Daemon    DaemonConfig     `mapstructure:"daemon" json:"daemon" yaml:"daemon,omitempty"`
 }
 
 type ProviderConfig struct {
@@ -29,6 +30,16 @@ type ProviderConfig struct {
 type GLMConfig struct {
 	APIKey  string `mapstructure:"api_key" json:"api_key" yaml:"api_key,omitempty"`
 	BaseURL string `mapstructure:"base_url" json:"base_url" yaml:"base_url,omitempty"`
+}
+
+type DaemonConfig struct {
+	ActivationRetry ActivationRetryConfig `mapstructure:"activation_retry" json:"activation_retry" yaml:"activation_retry,omitempty"`
+}
+
+type ActivationRetryConfig struct {
+	MaxAttempts  int    `mapstructure:"max_attempts" json:"max_attempts" yaml:"max_attempts,omitempty"`
+	InitialDelay string `mapstructure:"initial_delay" json:"initial_delay" yaml:"initial_delay,omitempty"`
+	DelayStep    string `mapstructure:"delay_step" json:"delay_step" yaml:"delay_step,omitempty"`
 }
 
 var (

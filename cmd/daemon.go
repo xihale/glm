@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xihale/glm/pkg/config"
 	"github.com/xihale/glm/pkg/providers"
+	"github.com/xihale/glm/pkg/providers/interfaces"
 	pkgutils "github.com/xihale/glm/pkg/utils"
 
 	"github.com/spf13/cobra"
@@ -24,6 +26,12 @@ const (
 )
 
 var daemonScheduler string
+
+const (
+	defaultActivationMaxAttempts  = 4
+	defaultActivationInitialDelay = 5 * time.Second
+	defaultActivationDelayStep    = 15 * time.Second
+)
 
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
@@ -125,9 +133,79 @@ func warnIfCrontabConflict() {
 	}
 }
 
+func activationRetryDelays() ([]time.Duration, error) {
+	settings := config.Current.Daemon.ActivationRetry
+
+	maxAttempts := settings.MaxAttempts
+	if maxAttempts == 0 {
+		maxAttempts = defaultActivationMaxAttempts
+	}
+	if maxAttempts < 1 {
+		return nil, fmt.Errorf("daemon.activation_retry.max_attempts must be at least 1")
+	}
+
+	initialDelay := defaultActivationInitialDelay
+	if settings.InitialDelay != "" {
+		parsed, err := time.ParseDuration(settings.InitialDelay)
+		if err != nil {
+			return nil, fmt.Errorf("invalid daemon.activation_retry.initial_delay %q: %w", settings.InitialDelay, err)
+		}
+		initialDelay = parsed
+	}
+
+	delayStep := defaultActivationDelayStep
+	if settings.DelayStep != "" {
+		parsed, err := time.ParseDuration(settings.DelayStep)
+		if err != nil {
+			return nil, fmt.Errorf("invalid daemon.activation_retry.delay_step %q: %w", settings.DelayStep, err)
+		}
+		delayStep = parsed
+	}
+
+	if initialDelay < 0 {
+		return nil, fmt.Errorf("daemon.activation_retry.initial_delay must be non-negative")
+	}
+	if delayStep < 0 {
+		return nil, fmt.Errorf("daemon.activation_retry.delay_step must be non-negative")
+	}
+
+	retries := maxAttempts - 1
+	if retries <= 0 {
+		return nil, nil
+	}
+
+	delays := make([]time.Duration, 0, retries)
+	for retryIndex := 0; retryIndex < retries; retryIndex++ {
+		delays = append(delays, initialDelay+(time.Duration(retryIndex)*delayStep))
+	}
+	return delays, nil
+}
+
+func activateWithRetry(p interfaces.Provider, delays []time.Duration) error {
+	for attempt := 1; attempt <= len(delays)+1; attempt++ {
+		if _, err := p.Activate(nil, false, false); err == nil {
+			return nil
+		} else if attempt <= len(delays) {
+			delay := delays[attempt-1]
+			fmt.Printf("%s activation attempt %d/%d failed: %v\n", p.Name(), attempt, len(delays)+1, err)
+			fmt.Printf("%s retrying activation in %s\n", p.Name(), delay)
+			time.Sleep(delay)
+		} else {
+			return fmt.Errorf("after %d attempts: %w", attempt, err)
+		}
+	}
+
+	return nil
+}
+
 // activateProviders authenticates and activates all configured providers.
 // It returns the earliest future reset time found (or zero if none).
-func activateProviders() time.Time {
+func activateProviders() (time.Time, error) {
+	retryDelays, err := activationRetryDelays()
+	if err != nil {
+		return time.Time{}, err
+	}
+
 	registry := providers.LoadProvidersFromConfig()
 	now := time.Now()
 	var earliestReset time.Time
@@ -151,12 +229,12 @@ func activateProviders() time.Time {
 			}
 		}
 
-		if _, err := p.Activate(nil, false, false); err != nil {
+		if err := activateWithRetry(p, retryDelays); err != nil {
 			fmt.Printf("%s activation error: %v\n", p.Name(), err)
 		}
 	}
 
-	return earliestReset
+	return earliestReset, nil
 }
 
 // resolveNextRun calculates the next daemon run time from the earliest reset.
@@ -174,9 +252,13 @@ func resolveNextRun(earliestReset time.Time) time.Time {
 	return earliestReset.Add(pkgutils.ResetBuffer).Add(pkgutils.ScheduleExtraDelay)
 }
 
-func runActivationCycle() time.Time {
+func runActivationCycle() (time.Time, error) {
 	fmt.Printf("Starting activation cycle at: %s\n", time.Now().Local().Format("2006-01-02 15:04:05"))
-	return resolveNextRun(activateProviders())
+	earliestReset, err := activateProviders()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return resolveNextRun(earliestReset), nil
 }
 
 func runDaemon() error {
@@ -198,7 +280,10 @@ func runDaemon() error {
 }
 
 func runDaemonCronOnce() error {
-	nextRun := runActivationCycle()
+	nextRun, err := runActivationCycle()
+	if err != nil {
+		return err
+	}
 
 	binaryPath, configPath, err := daemonPaths()
 	if err != nil {
@@ -217,7 +302,10 @@ func runDaemonCronOnce() error {
 }
 
 func runDaemonSystemdOnce() error {
-	nextRun := runActivationCycle()
+	nextRun, err := runActivationCycle()
+	if err != nil {
+		return err
+	}
 
 	execPath, configPath, err := daemonPaths()
 	if err != nil {
