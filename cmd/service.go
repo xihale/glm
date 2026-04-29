@@ -39,69 +39,77 @@ absolute time scheduling.`,
 
 var installServiceCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Install systemd user service and timer",
-	Run: func(cmd *cobra.Command, args []string) {
-		if config.Current.Schedule.IsEmpty() {
-			fmt.Println("\033[31m[-] No schedule configured. Run 'glm schedule set' first.\033[0m")
-			os.Exit(1)
-		}
-
+	Short: "Install and start systemd user service/timer",
+	RunE: func(cmd *cobra.Command, args []string) error {
 		execPath, configPath, err := servicePaths()
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			return err
 		}
 
-		timerSpec := buildOnCalendarSpec(config.Current.Schedule)
+		mode := "auto"
+		timerSpec := buildAutoTimerSpec()
+		if !config.Current.Schedule.IsEmpty() {
+			mode = "schedule"
+			timerSpec = buildOnCalendarSpec(config.Current.Schedule)
+		}
+
 		if err := installSystemdUnits(execPath, configPath, timerSpec); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			return err
+		}
+		if err := runSystemctlUser("daemon-reload"); err != nil {
+			return err
+		}
+		if err := runSystemctlUser("enable", "--now", systemdTimerUnit); err != nil {
+			return err
 		}
 
 		serviceDir, _, timerFile := systemdUnitPaths()
 		fmt.Printf("Systemd units installed to %s\n", serviceDir)
 		fmt.Printf("- %s\n", filepath.Base(timerFile))
 		fmt.Printf("- %s\n", systemdServiceUnit)
-		fmt.Println("Run: systemctl --user daemon-reload")
-		fmt.Println("     systemctl --user enable --now glm.timer")
+		fmt.Printf("[%s] service install: mode=%s; glm.timer enabled and started.\n", time.Now().Local().Format("2006-01-02 15:04:05"), mode)
+		return nil
 	},
 }
 
 var uninstallServiceCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "Uninstall systemd user service and timer",
-	Run: func(cmd *cobra.Command, args []string) {
+	Short: "Stop, disable, and remove systemd user service/timer",
+	RunE: func(cmd *cobra.Command, args []string) error {
 		serviceFile, timerFile, err := installedSystemdUnitFiles()
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			return err
 		}
 
+		if err := stopSystemdUnits(); err != nil {
+			return err
+		}
 		removed, err := removeSystemdUnits(serviceFile, timerFile)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			return err
 		}
 		if removed == 0 {
-			fmt.Printf("Systemd unit files not found: %s, %s\n", serviceFile, timerFile)
-			os.Exit(1)
+			return fmt.Errorf("systemd unit files not found: %s, %s", serviceFile, timerFile)
+		}
+		if err := runSystemctlUser("daemon-reload"); err != nil {
+			return err
 		}
 
 		fmt.Printf("Removed %d systemd unit(s)\n", removed)
-		fmt.Println("Run: systemctl --user daemon-reload")
-		fmt.Println("     systemctl --user disable --now glm.timer")
+		fmt.Printf("[%s] service uninstall: glm.timer/glm.service stopped, disabled, removed, and reloaded.\n", time.Now().Local().Format("2006-01-02 15:04:05"))
+		return nil
 	},
 }
 
 var stopServiceCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop and disable systemd user timer",
+	Short: "Stop and disable systemd user timer/service",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Printf("[%s] service stop: disabling glm.timer.\n", time.Now().Local().Format("2006-01-02 15:04:05"))
-		if err := runSystemctlUser("disable", "--now", systemdTimerUnit); err != nil {
+		fmt.Printf("[%s] service stop: stopping and disabling glm.timer/glm.service.\n", time.Now().Local().Format("2006-01-02 15:04:05"))
+		if err := stopSystemdUnits(); err != nil {
 			return err
 		}
-		fmt.Println("glm.timer stopped and disabled.")
+		fmt.Println("glm.timer/glm.service stopped and disabled.")
 		return nil
 	},
 }
@@ -195,6 +203,14 @@ func servicePaths() (string, string, error) {
 	}
 
 	return resolved, configPath, nil
+}
+
+func buildAutoTimerSpec() string {
+	return strings.Join([]string{
+		"RandomizedDelaySec=0",
+		"OnBootSec=30",
+		"OnUnitActiveSec=1h",
+	}, "\n")
 }
 
 // buildOnCalendarSpec builds OnCalendar entries from schedule config.
@@ -307,6 +323,16 @@ func writeSystemdUnitFile(path string, name string, tmpl string, data systemdUni
 		return err
 	}
 	return parsed.Execute(f, data)
+}
+
+func stopSystemdUnits() error {
+	if err := runSystemctlUser("disable", "--now", systemdTimerUnit); err != nil {
+		return err
+	}
+	if err := runSystemctlUser("disable", "--now", systemdServiceUnit); err != nil {
+		return err
+	}
+	return nil
 }
 
 func removeSystemdUnits(serviceFile string, timerFile string) (int, error) {
