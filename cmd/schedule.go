@@ -33,13 +33,12 @@ UTC+X timezone. Bare offsets like +8 are accepted.
 Example:
   glm schedule set +8 0:0 12:0 18:30`,
 	Args: cobra.MinimumNArgs(2),
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		zoneSpec := args[0]
 		timeStrs := args[1:]
 
-		if !isUTCOffsetSpec(zoneSpec) {
-			fmt.Printf("\033[31m[-] Invalid timezone '%s': must use an offset like +8 or UTC+8\033[0m\n", zoneSpec)
-			return
+		if _, err := parseScheduleLocation(zoneSpec); err != nil {
+			return fmt.Errorf("invalid timezone %q: %w", zoneSpec, err)
 		}
 
 		// Parse and normalize times without converting them.
@@ -47,8 +46,7 @@ Example:
 		for _, t := range timeStrs {
 			normalized, err := normalizeTime(t)
 			if err != nil {
-				fmt.Printf("\033[31m[-] Invalid time '%s': %v\033[0m\n", t, err)
-				return
+				return fmt.Errorf("invalid time %q: %w", t, err)
 			}
 			times = append(times, normalized)
 		}
@@ -62,13 +60,13 @@ Example:
 		}
 		viper.Set("schedule", config.Current.Schedule)
 		if err := config.SaveConfig(); err != nil {
-			fmt.Printf("\033[31m[-] Error saving config: %v\033[0m\n", err)
-			return
+			return fmt.Errorf("error saving config: %w", err)
 		}
 
 		fmt.Printf("\033[32m[+] Schedule set:\033[0m\n")
 		fmt.Printf("    Timezone: %s\n", zoneSpec)
 		fmt.Printf("    Times:    %s\n", strings.Join(times, ", "))
+		return nil
 	},
 }
 

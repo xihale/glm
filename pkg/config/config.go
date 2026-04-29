@@ -70,11 +70,11 @@ func InitConfig() {
 	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err != nil {
-		if CfgFile != "" {
+		if CfgFile != "" && !os.IsNotExist(err) {
 			fmt.Printf("Error reading config file %s: %v\n", CfgFile, err)
 			os.Exit(1)
 		}
-		if !os.IsNotExist(err) {
+		if CfgFile == "" && !os.IsNotExist(err) {
 			fmt.Printf("Warning: error reading config file: %v\n", err)
 		}
 	}
@@ -111,14 +111,20 @@ func fixLegacyKeys() {
 }
 
 func SaveConfig() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
+	configFile := viper.ConfigFileUsed()
+	if configFile == "" {
+		if CfgFile != "" {
+			configFile = CfgFile
+		} else {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return err
+			}
+			configFile = filepath.Join(home, ".config", "glm", "config.yaml")
+		}
 	}
-	configPath := filepath.Join(home, ".config", "glm")
-	configFile := filepath.Join(configPath, "config.yaml")
 
-	if err := os.MkdirAll(configPath, 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configFile), 0700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
