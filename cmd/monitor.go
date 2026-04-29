@@ -16,7 +16,7 @@ var monitorCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		registry := providers.LoadProvidersFromConfig()
 		if len(registry) == 0 {
-			fmt.Println("No GLM providers configured. Run 'glm auth set' first.")
+			fmt.Println("No GLM providers configured. Run 'glm login' first.")
 			return
 		}
 

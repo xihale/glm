@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-viper/mapstructure/v2"
@@ -15,7 +16,7 @@ type Config struct {
 	Proxy     string           `mapstructure:"proxy" json:"proxy" yaml:"proxy,omitempty"`
 	GLM       GLMConfig        `mapstructure:"glm" json:"glm" yaml:"glm,omitempty"`
 	Providers []ProviderConfig `mapstructure:"providers" json:"providers" yaml:"providers,omitempty"`
-	Daemon    DaemonConfig     `mapstructure:"daemon" json:"daemon" yaml:"daemon,omitempty"`
+	Schedule  ScheduleConfig   `mapstructure:"schedule" json:"schedule" yaml:"schedule,omitempty"`
 }
 
 type ProviderConfig struct {
@@ -32,14 +33,13 @@ type GLMConfig struct {
 	BaseURL string `mapstructure:"base_url" json:"base_url" yaml:"base_url,omitempty"`
 }
 
-type DaemonConfig struct {
-	ActivationRetry ActivationRetryConfig `mapstructure:"activation_retry" json:"activation_retry" yaml:"activation_retry,omitempty"`
+type ScheduleConfig struct {
+	Timezone string   `mapstructure:"timezone" json:"timezone" yaml:"timezone,omitempty"`
+	Times    []string `mapstructure:"times" json:"times" yaml:"times,omitempty"`
 }
 
-type ActivationRetryConfig struct {
-	MaxAttempts  int    `mapstructure:"max_attempts" json:"max_attempts" yaml:"max_attempts,omitempty"`
-	InitialDelay string `mapstructure:"initial_delay" json:"initial_delay" yaml:"initial_delay,omitempty"`
-	DelayStep    string `mapstructure:"delay_step" json:"delay_step" yaml:"delay_step,omitempty"`
+func (s ScheduleConfig) IsEmpty() bool {
+	return strings.TrimSpace(s.Timezone) == "" || len(s.Times) == 0
 }
 
 var (
@@ -70,12 +70,10 @@ func InitConfig() {
 	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err != nil {
-		// If the user explicitly specified a config file, any error is fatal.
 		if CfgFile != "" {
 			fmt.Printf("Error reading config file %s: %v\n", CfgFile, err)
 			os.Exit(1)
 		}
-		// For the default path, only warn on non-NotExist errors (e.g. permission denied, malformed).
 		if !os.IsNotExist(err) {
 			fmt.Printf("Warning: error reading config file: %v\n", err)
 		}

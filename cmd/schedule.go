@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,6 +139,9 @@ func parseScheduleLocation(spec string) (*time.Location, error) {
 
 func parseUTCTimeOffset(spec string) (int, error) {
 	upper := strings.ToUpper(strings.TrimSpace(spec))
+	if upper == "UTC" {
+		return 0, nil
+	}
 	if strings.HasPrefix(upper, "UTC") {
 		upper = strings.TrimSpace(upper[3:])
 	}
@@ -256,8 +260,8 @@ func parseHour(s string) (int, error) {
 }
 
 func parseRange(s string, min, max int) (int, error) {
-	var v int
-	if _, err := fmt.Sscanf(s, "%d", &v); err != nil {
+	v, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
 		return 0, fmt.Errorf("not a number")
 	}
 	if v < min || v > max {

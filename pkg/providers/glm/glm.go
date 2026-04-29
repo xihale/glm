@@ -19,8 +19,7 @@ const (
 
 	QuotaEndpoint     = "/api/monitor/usage/quota/limit"
 	HeartbeatEndpoint = "/api/coding/paas/v4/chat/completions"
-	UserAgent         = "ClaudeCode/2.1.27"
-	ClientEnv         = "claude-code"
+	UserAgent         = "OpenClaw/2026.3.19"
 	HeartbeatModel    = "glm-4.7"
 )
 
@@ -49,7 +48,6 @@ func NewProviderWithConfig(cfg config.ProviderConfig) *Provider {
 	return p
 }
 
-// SetTotal sets the total number of providers for display purposes.
 func (p *Provider) SetTotal(n int) { p.total = n }
 
 func (p *Provider) Name() string {
@@ -61,12 +59,14 @@ func (p *Provider) Name() string {
 	}
 	return "[GLM]"
 }
+
 func (p *Provider) ID() string {
 	if p.Config.Name != "" {
 		return "glm_" + p.Config.Name
 	}
 	return "glm"
 }
+
 func (p *Provider) SetDebug(d bool) { p.Debug = d }
 
 func (p *Provider) Authenticate() error {
@@ -162,22 +162,10 @@ func (p *Provider) GetQuota() (*interfaces.QuotaStatus, error) {
 	}, nil
 }
 
-// Activate sends a heartbeat to commit a new quota cycle.
+// Activate sends a heartbeat disguised as an opencode heartbeat to commit a new quota cycle.
 //
-// The server behavior is:
-//   - When a cycle resets, the server shows Remaining=100% with a ResetTime in the
-//     future, but the new cycle does NOT truly start until the first request (commit)
-//     is sent. Until then the server keeps pushing the start/reset time forward.
-//   - After activation, the server returns Remaining=100% with a new ResetTime ~5h
-//     in the future (same data, but the cycle is now truly active).
-//   - When Remaining < 100%, the cycle is in use — sending heartbeat is useless.
-//
-// Since uncommitted and committed states return identical data (Remaining=100% +
-// future ResetTime), Activate cannot distinguish them from quota alone. The daemon
-// handles this by scheduling itself right after the expected reset time.
-//
-// In non-force mode: skip if Remaining < 100% (in use, heartbeat is useless).
-// Otherwise (Remaining == 100%): send heartbeat to ensure the cycle is committed.
+// In non-force mode: skip if Remaining < 100% (cycle in use).
+// Otherwise: send heartbeat to ensure cycle is committed.
 // In force mode: always sends heartbeat.
 func (p *Provider) Activate(w io.Writer, debug bool, force bool) (*interfaces.QuotaStatus, error) {
 	quota, err := p.GetQuota()
@@ -186,7 +174,6 @@ func (p *Provider) Activate(w io.Writer, debug bool, force bool) (*interfaces.Qu
 	}
 
 	if !force {
-		// Remaining < 100% means the cycle is in use — heartbeat is useless.
 		if quota.Remaining < 100 {
 			timeStr := pkgutils.FormatTimeUntil(quota.ResetTime)
 			resetAt := quota.ResetTime.Local().Format("15:04:05")
@@ -207,8 +194,12 @@ func (p *Provider) Activate(w io.Writer, debug bool, force bool) (*interfaces.Qu
 
 func (p *Provider) SendHeartbeat() error {
 	payload := map[string]interface{}{
-		"model":      HeartbeatModel,
-		"messages":   []map[string]string{{"role": "user", "content": "commit"}},
+		"type":      "heartbeat",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"model":     HeartbeatModel,
+		"messages": []map[string]string{
+			{"role": "user", "content": "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK."},
+		},
 		"max_tokens": 5,
 	}
 	body, _ := json.Marshal(payload)
@@ -228,17 +219,9 @@ func (p *Provider) SendHeartbeat() error {
 	return nil
 }
 
-// setHeaders applies common headers to all requests.
-// Mirrors headers used by CLI coding agents like ClaudeCode/Forge:
-//   - Authorization: Bearer <api_key> (standard OpenAI-compatible auth)
-//   - User-Agent: identifies the client
-//   - X-Client-Environment: identifies the client environment
-//   - Connection: keep-alive for connection reuse
-//   - Accept: application/json
 func (p *Provider) setHeaders(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	req.Header.Set("User-Agent", UserAgent)
-	req.Header.Set("X-Client-Environment", ClientEnv)
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Accept", "application/json")
 }
