@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"syscall"
 
 	"github.com/xihale/glm/pkg/config"
@@ -13,45 +14,50 @@ import (
 
 var loginCmd = &cobra.Command{
 	Use:   "login [name]",
-	Short: "Add a provider account",
-	Long:  `Add a GLM provider account. Name can be passed as argument or will be prompted.`,
+	Short: "Add or update a GLM account",
+	Long:  `Add or update a GLM provider account. Name can be passed as an argument; API key is prompted securely.`,
 	Args:  cobra.MaximumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		var name string
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := ""
 		if len(args) > 0 {
-			name = args[0]
-		} else {
-			fmt.Print("  [*] Enter provider name: ")
-			fmt.Scanln(&name)
+			name = strings.TrimSpace(args[0])
 		}
-
 		if name == "" {
-			fmt.Println("  \033[33m[!] Name cannot be empty.\033[0m")
-			return
-		}
-
-		// Check if already exists
-		for _, p := range config.Current.Providers {
-			if p.Name == name {
-				fmt.Printf("  \033[33m[!] Provider '%s' already exists. Use 'config set glm.%s.api_key' to update.\033[0m\n", name, name)
-				return
+			fmt.Print("Name: ")
+			if _, err := fmt.Scanln(&name); err != nil {
+				return fmt.Errorf("read name: %w", err)
 			}
+			name = strings.TrimSpace(name)
+		}
+		if name == "" {
+			return fmt.Errorf("name cannot be empty")
 		}
 
-		fmt.Printf("\n\033[1;36mLogin: %s\033[0m\n", name)
-		fmt.Println("\033[36m────────────────────────────────────────────────────────────\033[0m")
-		fmt.Print("  [*] Enter API Key: ")
+		fmt.Print("API key: ")
 		bytePassword, err := term.ReadPassword(int(syscall.Stdin))
 		if err != nil {
-			fmt.Printf("\n  \033[31m[-] Error reading input: %v\033[0m\n", err)
-			return
+			fmt.Println()
+			return fmt.Errorf("read API key: %w", err)
 		}
 		fmt.Println()
 
-		key := string(bytePassword)
+		key := strings.TrimSpace(string(bytePassword))
 		if key == "" {
-			fmt.Println("  \033[33m[!] API Key cannot be empty.\033[0m")
-			return
+			return fmt.Errorf("API key cannot be empty")
+		}
+
+		for i := range config.Current.Providers {
+			if config.Current.Providers[i].Name == name {
+				config.Current.Providers[i].Type = "glm"
+				config.Current.Providers[i].APIKey = key
+				config.Current.Providers[i].Enabled = true
+				viper.Set("providers", config.Current.Providers)
+				if err := config.SaveConfig(); err != nil {
+					return fmt.Errorf("save config: %w", err)
+				}
+				fmt.Printf("Updated %s\n", name)
+				return nil
+			}
 		}
 
 		config.Current.Providers = append(config.Current.Providers, config.ProviderConfig{
@@ -62,10 +68,10 @@ var loginCmd = &cobra.Command{
 		})
 		viper.Set("providers", config.Current.Providers)
 		if err := config.SaveConfig(); err != nil {
-			fmt.Printf("  \033[31m[-] Error saving config: %v\033[0m\n", err)
-			return
+			return fmt.Errorf("save config: %w", err)
 		}
-		fmt.Printf("  \033[32m[+] Provider '%s' added.\033[0m\n", name)
+		fmt.Printf("Added %s\n", name)
+		return nil
 	},
 }
 

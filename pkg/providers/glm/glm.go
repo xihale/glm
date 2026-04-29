@@ -21,6 +21,7 @@ const (
 	HeartbeatEndpoint = "/api/coding/paas/v4/chat/completions"
 	UserAgent         = "OpenClaw/2026.3.19"
 	HeartbeatModel    = "glm-4.7"
+	HeartbeatPrompt   = "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK."
 )
 
 type Provider struct {
@@ -198,7 +199,7 @@ func (p *Provider) SendHeartbeat() error {
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"model":     HeartbeatModel,
 		"messages": []map[string]string{
-			{"role": "user", "content": "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK."},
+			{"role": "user", "content": HeartbeatPrompt},
 		},
 		"max_tokens": 5,
 	}

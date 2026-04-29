@@ -46,7 +46,7 @@ var installServiceCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		execPath, configPath, err := daemonPaths()
+		execPath, configPath, err := servicePaths()
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
@@ -141,8 +141,8 @@ func init() {
 	serviceRunCmd.Flags().Bool("debug", false, "Show raw API response")
 }
 
-// daemonPaths resolves the current executable path and config path for scheduling.
-func daemonPaths() (string, string, error) {
+// servicePaths resolves the current executable path and config path for systemd service runs.
+func servicePaths() (string, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", fmt.Errorf("cannot determine home directory: %w", err)

@@ -20,8 +20,9 @@ var (
 )
 
 var configCmd = &cobra.Command{
-	Use:   "config",
-	Short: "Manage configuration",
+	Use:    "config",
+	Short:  "Manage configuration",
+	Hidden: true,
 }
 
 var configSetCmd = &cobra.Command{

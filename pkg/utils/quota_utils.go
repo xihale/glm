@@ -12,7 +12,7 @@ const (
 	// The server-side reset may not take effect at the exact second, so we wait a bit.
 	ResetBuffer = 5 * time.Second
 	// ScheduleExtraDelay is the additional delay beyond ResetBuffer when scheduling
-	// the next daemon run, to ensure the reset has fully propagated.
+	// a follow-up activation, to ensure the reset has fully propagated.
 	ScheduleExtraDelay = 1 * time.Minute
 )
 
