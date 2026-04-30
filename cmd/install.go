@@ -19,11 +19,13 @@ import (
 
 var installCmd = &cobra.Command{
 	Use:   "install [timezone] [time...]",
-	Short: "Install systemd timer for scheduled activation",
-	Long: `Install systemd user timer for scheduled GLM quota activation.
+	Short: "Install systemd service for scheduled activation",
+	Long: `Install systemd user service for GLM quota activation.
+
+The service runs as a self-driven daemon: activate, sleep until next run, repeat.
 
 Modes:
-  --auto    Auto-schedule: active calculates next run from quota reset time.
+  --auto    Auto-schedule: calculate next run from API quota reset time.
             No arguments needed.
 
   Manual    Pass timezone and times:
@@ -48,7 +50,6 @@ Times accept H, H:M, or H:M:S format.`,
 }
 
 func installAuto() error {
-	// Save auto schedule to config
 	config.Current.Schedule = config.ScheduleConfig{
 		Auto: true,
 	}
@@ -57,35 +58,29 @@ func installAuto() error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	// Install systemd units with a placeholder timer (will be updated by active)
 	execPath, configPath, err := servicePaths()
 	if err != nil {
 		return err
 	}
 
-	// Initial timer: run active once after boot
-	timerSpec := "OnBootSec=1min"
-	if err := installSystemdUnits(execPath, configPath, timerSpec); err != nil {
+	if err := installServiceUnit(execPath, configPath); err != nil {
 		return err
 	}
 	if err := systemctlUser("daemon-reload"); err != nil {
 		return err
 	}
-	if err := systemctlUser("enable", timerUnit); err != nil {
-		return err
-	}
-	if err := systemctlUser("restart", timerUnit); err != nil {
+	if err := systemctlUser("enable", "--now", serviceUnit); err != nil {
 		return err
 	}
 
-	ui.Success("Installed auto-schedule timer")
-	fmt.Printf("  Mode: %s\n", ui.Accent("auto (calculates next run after each activation)"))
-	fmt.Printf("  Unit: %s\n", ui.Accent(timerUnit))
+	ui.Success("Installed auto-schedule service")
+	fmt.Printf("  Mode: %s\n", ui.Accent("auto (self-driven daemon)"))
+	fmt.Printf("  Unit: %s\n", ui.Accent(serviceUnit))
 	return nil
 }
 
 func installManual(zoneSpec string, timeStrs []string) error {
-	loc, err := parseTimezone(zoneSpec)
+	_, err := parseTimezone(zoneSpec)
 	if err != nil {
 		return fmt.Errorf("invalid timezone %q: %w", zoneSpec, err)
 	}
@@ -114,42 +109,30 @@ func installManual(zoneSpec string, timeStrs []string) error {
 		return err
 	}
 
-	timerSpec, err := buildOnCalendarSpec(loc, times)
-	if err != nil {
-		return err
-	}
-
-	if err := installSystemdUnits(execPath, configPath, timerSpec); err != nil {
+	if err := installServiceUnit(execPath, configPath); err != nil {
 		return err
 	}
 	if err := systemctlUser("daemon-reload"); err != nil {
 		return err
 	}
-	if err := systemctlUser("enable", timerUnit); err != nil {
-		return err
-	}
-	if err := systemctlUser("restart", timerUnit); err != nil {
+	if err := systemctlUser("enable", "--now", serviceUnit); err != nil {
 		return err
 	}
 
-	ui.Success("Installed systemd timer")
+	ui.Success("Installed scheduled service")
 	fmt.Printf("  Timezone: %s\n", ui.Accent(zoneSpec))
 	fmt.Printf("  Times:    %s\n", ui.Accent(strings.Join(times, ", ")))
-	fmt.Printf("  Unit:     %s\n", ui.Accent(timerUnit))
+	fmt.Printf("  Unit:     %s\n", ui.Accent(serviceUnit))
 	return nil
 }
 
-// --- systemd unit management ---
+// --- systemd ---
 
-const (
-	serviceUnit = "glm.service"
-	timerUnit   = "glm.timer"
-)
+const serviceUnit = "glm.service"
 
 type unitData struct {
 	ExecPath   string
 	ConfigPath string
-	TimerSpec  string
 }
 
 func servicePaths() (execPath, configPath string, err error) {
@@ -169,80 +152,22 @@ func systemdUnitDir() string {
 	return filepath.Join(home, ".config", "systemd", "user")
 }
 
-func buildOnCalendarSpec(loc *time.Location, times []string) (string, error) {
-	var lines []string
-	lines = append(lines, "RandomizedDelaySec=0")
-
-	for _, t := range times {
-		parts := strings.Split(t, ":")
-		if len(parts) == 3 {
-			lines = append(lines, fmt.Sprintf("OnCalendar=*-*-* %s:%s:%s %s",
-				parts[0], parts[1], parts[2], loc.String()))
-		}
-	}
-
-	lines = append(lines, "OnBootSec=30")
-	return strings.Join(lines, "\n"), nil
-}
-
-func installSystemdUnits(execPath, configPath, timerSpec string) error {
+func installServiceUnit(execPath, configPath string) error {
 	dir := systemdUnitDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
-	data := unitData{
-		ExecPath:   execPath,
-		ConfigPath: configPath,
-		TimerSpec:  timerSpec,
-	}
+	data := unitData{ExecPath: execPath, ConfigPath: configPath}
+	path := filepath.Join(dir, serviceUnit)
 
-	serviceFile := filepath.Join(dir, serviceUnit)
-	timerFile := filepath.Join(dir, timerUnit)
-
-	if err := writeUnitFile(serviceFile, serviceTmpl, data); err != nil {
-		return err
-	}
-	return writeUnitFile(timerFile, timerTmpl, data)
-}
-
-// RescheduleTimer rewrites the timer unit with a single OnCalendar for nextRun
-// and restarts the timer. Used by active --service in auto mode.
-func RescheduleTimer(nextRun time.Time) error {
-	execPath, configPath, err := servicePaths()
-	if err != nil {
-		return err
-	}
-
-	// Single OnCalendar with exact date-time
-	spec := fmt.Sprintf("OnCalendar=%s\nPersistent=true", nextRun.Format("2006-01-02 15:04:05"))
-
-	dir := systemdUnitDir()
-	data := unitData{
-		ExecPath:   execPath,
-		ConfigPath: configPath,
-		TimerSpec:  spec,
-	}
-
-	timerFile := filepath.Join(dir, timerUnit)
-	if err := writeUnitFile(timerFile, timerTmpl, data); err != nil {
-		return err
-	}
-
-	if err := systemctlUser("daemon-reload"); err != nil {
-		return err
-	}
-	return systemctlUser("restart", timerUnit)
-}
-
-func writeUnitFile(path, tmpl string, data unitData) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	t, err := template.New(filepath.Base(path)).Parse(tmpl)
+	t, err := template.New(serviceUnit).Parse(serviceTmpl)
 	if err != nil {
 		return err
 	}
@@ -398,31 +323,21 @@ func parseRange(s string, min, max int) (int, error) {
 	return v, nil
 }
 
-// --- systemd unit templates ---
-
 const serviceTmpl = `[Unit]
-Description=GLM Activation Service
+Description=GLM Activation Daemon
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
+Type=simple
 ExecStart={{.ExecPath}} active --service --config {{.ConfigPath}}
+Restart=on-failure
+RestartSec=30
 StandardOutput=journal
 StandardError=journal
-`
-
-const timerTmpl = `[Unit]
-Description=GLM Activation Timer
-
-[Timer]
-Unit=glm.service
-{{.TimerSpec}}
-Persistent=true
-AccuracySec=1s
 
 [Install]
-WantedBy=timers.target
+WantedBy=default.target
 `
 
 func init() {

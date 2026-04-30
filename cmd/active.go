@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/xihale/glm/pkg/config"
@@ -19,7 +22,7 @@ var activeCmd = &cobra.Command{
 
 Verifies activation by polling quota after heartbeat.
 Use --force to activate even when quota is active.
-In auto-schedule mode, reschedules the next run based on quota reset time.`,
+With --service, runs as a daemon: activate, sleep until next run, repeat.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if config.Current.APIKey == "" {
 			return fmt.Errorf("no API key configured. Run 'glm login' first")
@@ -32,55 +35,156 @@ In auto-schedule mode, reschedules the next run based on quota reset time.`,
 		client := glm.NewClient()
 		client.SetDebug(debug)
 
-		s := ui.NewSpinner("Activating...")
-		s.Start()
-
 		if serviceMode {
-			log.Infof("Service mode activation")
+			return runDaemon(client, force)
 		}
 
-		quota, err := client.Activate(force, serviceMode)
+		// One-shot mode
+		s := ui.NewSpinner("Activating...")
+		s.Start()
+		quota, err := client.Activate(force, false)
 		s.Stop()
 		fmt.Println()
-
 		if err != nil {
 			ui.Error(fmt.Sprintf("Activation failed: %v", err))
 			return err
 		}
-
 		printQuotaResult(quota)
-
-		// Auto-reschedule if in auto mode + service mode
-		if serviceMode && config.Current.Schedule.Auto && !quota.ResetTime.IsZero() {
-			if err := rescheduleAuto(quota.ResetTime); err != nil {
-				log.Errorf("Auto-reschedule failed: %v", err)
-			}
-		}
-
 		return nil
 	},
 }
 
-func rescheduleAuto(resetTime time.Time) error {
-	// Schedule next activation shortly after reset
-	nextRun := resetTime.Add(30 * time.Second)
+func runDaemon(client *glm.Client, force bool) error {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// If next run is in the past, skip
-	if time.Until(nextRun) <= 0 {
-		log.Debugf("Next run %s is in the past, skipping reschedule", nextRun.Format("2006-01-02 15:04:05"))
-		return nil
+	log.Infof("Daemon started (auto=%v manual=%v)",
+		config.Current.Schedule.Auto, !config.Current.Schedule.IsEmpty())
+
+	for {
+		// Activate
+		log.Infof("Activating...")
+		quota, err := client.Activate(force, true)
+		if err != nil {
+			log.Errorf("Activation failed: %v", err)
+			// Back off and retry
+			select {
+			case <-sigCh:
+				log.Infof("Received signal, shutting down")
+				return nil
+			case <-time.After(1 * time.Minute):
+				continue
+			}
+		}
+
+		log.Infof("Activated — %d%% remaining", quota.Remaining)
+		if !quota.ResetTime.IsZero() {
+			log.Infof("Reset at: %s (%s)",
+				quota.ResetTime.Local().Format("15:04:05"), glm.FormatTimeUntil(quota.ResetTime))
+		}
+
+		// Calculate next run
+		nextRun, err := nextActivationTime(quota)
+		if err != nil {
+			log.Errorf("Calculate next run: %v", err)
+			return err
+		}
+
+		wait := time.Until(nextRun)
+		log.Infof("Next activation at %s (sleeping %s)",
+			nextRun.Local().Format("2006-01-02 15:04:05"), glm.FormatTimeUntil(nextRun))
+
+		// Sleep until next run or signal
+		select {
+		case <-sigCh:
+			log.Infof("Received signal, shutting down")
+			return nil
+		case <-time.After(wait):
+		}
+	}
+}
+
+func nextActivationTime(quota *glm.QuotaStatus) (time.Time, error) {
+	sched := config.Current.Schedule
+
+	// Auto mode: next_reset + 30s
+	if sched.Auto {
+		if quota.ResetTime.IsZero() {
+			// No reset info, default to 4 hours
+			return time.Now().Add(4 * time.Hour), nil
+		}
+		return quota.ResetTime.Add(30 * time.Second), nil
 	}
 
-	log.Infof("Rescheduling next activation to %s", nextRun.Format("2006-01-02 15:04:05"))
+	// Manual mode: next scheduled time from config
+	return nextScheduledTime(sched)
+}
 
-	if err := RescheduleTimer(nextRun); err != nil {
-		return fmt.Errorf("reschedule timer: %w", err)
+func nextScheduledTime(sched config.ScheduleConfig) (time.Time, error) {
+	loc, err := parseTimezone(sched.Timezone)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("bad timezone %q: %w", sched.Timezone, err)
 	}
 
-	ui.Info(fmt.Sprintf("Next activation: %s (%s)",
-		ui.Style(nextRun.Local().Format("15:04:05"), ui.Cyan, ui.Bold),
-		ui.Dimmed(glm.FormatTimeUntil(nextRun))))
-	return nil
+	now := time.Now().In(loc)
+	var earliest time.Time
+
+	for _, t := range sched.Times {
+		parts := splitTime(t)
+		if len(parts) != 3 {
+			continue
+		}
+		h, _ := parseRange(parts[0], 0, 23)
+		m, _ := parseRange(parts[1], 0, 59)
+		s, _ := parseRange(parts[2], 0, 59)
+
+		// Today's occurrence
+		candidate := time.Date(now.Year(), now.Month(), now.Day(), h, m, s, 0, loc)
+		// If already passed, use tomorrow
+		if !candidate.After(now) {
+			candidate = candidate.AddDate(0, 0, 1)
+		}
+
+		if earliest.IsZero() || candidate.Before(earliest) {
+			earliest = candidate
+		}
+	}
+
+	if earliest.IsZero() {
+		return time.Time{}, fmt.Errorf("no valid times in schedule")
+	}
+	return earliest, nil
+}
+
+func splitTime(s string) []string {
+	parts := make([]string, 0, 3)
+	for _, p := range splitStr(s, ":") {
+		parts = append(parts, p)
+	}
+	return parts
+}
+
+func splitStr(s, sep string) []string {
+	var result []string
+	for {
+		idx := indexOf(s, sep)
+		if idx < 0 {
+			result = append(result, s)
+			break
+		}
+		result = append(result, s[:idx])
+		s = s[idx+len(sep):]
+	}
+	return result
+}
+
+func indexOf(s, sep string) int {
+	for i := 0; i+len(sep) <= len(s); i++ {
+		if s[i:i+len(sep)] == sep {
+			return i
+		}
+	}
+	return -1
 }
 
 func printQuotaResult(q *glm.QuotaStatus) {
@@ -102,6 +206,6 @@ func printQuotaResult(q *glm.QuotaStatus) {
 func init() {
 	rootCmd.AddCommand(activeCmd)
 	activeCmd.Flags().BoolP("force", "f", false, "Force activation even if quota is active")
-	activeCmd.Flags().Bool("service", false, "Service mode: auto-sleep on imminent reset")
+	activeCmd.Flags().Bool("service", false, "Daemon mode: activate, sleep, repeat")
 	activeCmd.Flags().Bool("debug", false, "Show raw API responses")
 }

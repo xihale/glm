@@ -14,34 +14,26 @@ import (
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "Uninstall systemd timer",
-	Long:  `Stop, disable, and remove the systemd user timer. Clears the schedule from config.`,
+	Short: "Uninstall systemd service",
+	Long:  `Stop, disable, and remove the systemd user service. Clears the schedule from config.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir := systemdUnitDir()
 		serviceFile := filepath.Join(dir, serviceUnit)
-		timerFile := filepath.Join(dir, timerUnit)
 
-		// Stop units
-		if err := systemctlUser("disable", "--now", timerUnit); err != nil {
-			if !strings.Contains(err.Error(), "not loaded") {
-				ui.Warn(fmt.Sprintf("Stop timer: %v", err))
-			}
-		}
+		// Stop service
 		if err := systemctlUser("disable", "--now", serviceUnit); err != nil {
 			if !strings.Contains(err.Error(), "not loaded") {
 				ui.Warn(fmt.Sprintf("Stop service: %v", err))
 			}
 		}
 
-		// Remove unit files
+		// Remove unit file
 		removed := 0
-		for _, path := range []string{serviceFile, timerFile} {
-			if _, err := os.Stat(path); err == nil {
-				if err := os.Remove(path); err != nil {
-					ui.Warn(fmt.Sprintf("Remove %s: %v", filepath.Base(path), err))
-				} else {
-					removed++
-				}
+		if _, err := os.Stat(serviceFile); err == nil {
+			if err := os.Remove(serviceFile); err != nil {
+				ui.Warn(fmt.Sprintf("Remove %s: %v", filepath.Base(serviceFile), err))
+			} else {
+				removed++
 			}
 		}
 
