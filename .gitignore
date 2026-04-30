@@ -1,5 +1,5 @@
 # Binaries
-glm
+/glm
 ai-daemon
 main
 *.exe
