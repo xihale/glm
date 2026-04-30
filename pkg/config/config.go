@@ -19,12 +19,13 @@ type Config struct {
 }
 
 type ScheduleConfig struct {
+	Auto     bool     `mapstructure:"auto" json:"auto" yaml:"auto,omitempty"`
 	Timezone string   `mapstructure:"timezone" json:"timezone" yaml:"timezone,omitempty"`
 	Times    []string `mapstructure:"times" json:"times" yaml:"times,omitempty"`
 }
 
 func (s ScheduleConfig) IsEmpty() bool {
-	return strings.TrimSpace(s.Timezone) == "" || len(s.Times) == 0
+	return !s.Auto && (strings.TrimSpace(s.Timezone) == "" || len(s.Times) == 0)
 }
 
 var (

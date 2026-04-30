@@ -18,78 +18,125 @@ import (
 )
 
 var installCmd = &cobra.Command{
-	Use:   "install <timezone> <time> [time...]",
+	Use:   "install [timezone] [time...]",
 	Short: "Install systemd timer for scheduled activation",
 	Long: `Install systemd user timer for scheduled GLM quota activation.
 
-Sets the schedule and installs systemd units in one step.
+Modes:
+  --auto    Auto-schedule: active calculates next run from quota reset time.
+            No arguments needed.
+
+  Manual    Pass timezone and times:
+            glm install +8 5:00 10:00 15:00 20:00
+
 Timezone accepts UTC offsets like +8 or UTC+8, or IANA names like Asia/Shanghai.
-Times accept H, H:M, or H:M:S format.
-
-Example:
-  glm install +8 5:00 10:00 15:00 20:00`,
-	Args: cobra.MinimumNArgs(2),
+Times accept H, H:M, or H:M:S format.`,
+	Args: cobra.MaximumNArgs(10),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		zoneSpec := args[0]
-		timeStrs := args[1:]
+		auto, _ := cmd.Flags().GetBool("auto")
 
-		// Parse timezone
-		loc, err := parseTimezone(zoneSpec)
-		if err != nil {
-			return fmt.Errorf("invalid timezone %q: %w", zoneSpec, err)
+		if auto {
+			return installAuto()
 		}
 
-		// Parse and normalize times
-		var times []string
-		for _, t := range timeStrs {
-			normalized, err := normalizeTime(t)
-			if err != nil {
-				return fmt.Errorf("invalid time %q: %w", t, err)
-			}
-			times = append(times, normalized)
-		}
-		sort.Strings(times)
-
-		// Save schedule to config
-		config.Current.Schedule = config.ScheduleConfig{
-			Timezone: zoneSpec,
-			Times:    times,
-		}
-		viper.Set("schedule", config.Current.Schedule)
-		if err := config.SaveConfig(); err != nil {
-			return fmt.Errorf("save config: %w", err)
+		if len(args) < 2 {
+			return fmt.Errorf("manual mode requires <timezone> <time> [time...], or use --auto")
 		}
 
-		// Build and install systemd units
-		execPath, configPath, err := servicePaths()
-		if err != nil {
-			return err
-		}
-
-		timerSpec, err := buildOnCalendarSpec(loc, times)
-		if err != nil {
-			return err
-		}
-
-		if err := installSystemdUnits(execPath, configPath, timerSpec); err != nil {
-			return err
-		}
-		if err := systemctlUser("daemon-reload"); err != nil {
-			return err
-		}
-		if err := systemctlUser("enable", timerUnit); err != nil {
-			return err
-		}
-		if err := systemctlUser("restart", timerUnit); err != nil {
-			return err
-		}
-
-		ui.Success("Installed systemd timer")
-		fmt.Printf("  Timezone: %s\n", ui.Accent(zoneSpec))
-		fmt.Printf("  Times:    %s\n", ui.Accent(strings.Join(times, ", ")))
-		fmt.Printf("  Unit:     %s\n", ui.Accent(timerUnit))
-		return nil
+		return installManual(args[0], args[1:])
 	},
+}
+
+func installAuto() error {
+	// Save auto schedule to config
+	config.Current.Schedule = config.ScheduleConfig{
+		Auto: true,
+	}
+	viper.Set("schedule", config.Current.Schedule)
+	if err := config.SaveConfig(); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+
+	// Install systemd units with a placeholder timer (will be updated by active)
+	execPath, configPath, err := servicePaths()
+	if err != nil {
+		return err
+	}
+
+	// Initial timer: run active once after boot
+	timerSpec := "OnBootSec=1min"
+	if err := installSystemdUnits(execPath, configPath, timerSpec); err != nil {
+		return err
+	}
+	if err := systemctlUser("daemon-reload"); err != nil {
+		return err
+	}
+	if err := systemctlUser("enable", timerUnit); err != nil {
+		return err
+	}
+	if err := systemctlUser("restart", timerUnit); err != nil {
+		return err
+	}
+
+	ui.Success("Installed auto-schedule timer")
+	fmt.Printf("  Mode: %s\n", ui.Accent("auto (calculates next run after each activation)"))
+	fmt.Printf("  Unit: %s\n", ui.Accent(timerUnit))
+	return nil
+}
+
+func installManual(zoneSpec string, timeStrs []string) error {
+	loc, err := parseTimezone(zoneSpec)
+	if err != nil {
+		return fmt.Errorf("invalid timezone %q: %w", zoneSpec, err)
+	}
+
+	var times []string
+	for _, t := range timeStrs {
+		normalized, err := normalizeTime(t)
+		if err != nil {
+			return fmt.Errorf("invalid time %q: %w", t, err)
+		}
+		times = append(times, normalized)
+	}
+	sort.Strings(times)
+
+	config.Current.Schedule = config.ScheduleConfig{
+		Timezone: zoneSpec,
+		Times:    times,
+	}
+	viper.Set("schedule", config.Current.Schedule)
+	if err := config.SaveConfig(); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+
+	execPath, configPath, err := servicePaths()
+	if err != nil {
+		return err
+	}
+
+	timerSpec, err := buildOnCalendarSpec(loc, times)
+	if err != nil {
+		return err
+	}
+
+	if err := installSystemdUnits(execPath, configPath, timerSpec); err != nil {
+		return err
+	}
+	if err := systemctlUser("daemon-reload"); err != nil {
+		return err
+	}
+	if err := systemctlUser("enable", timerUnit); err != nil {
+		return err
+	}
+	if err := systemctlUser("restart", timerUnit); err != nil {
+		return err
+	}
+
+	ui.Success("Installed systemd timer")
+	fmt.Printf("  Timezone: %s\n", ui.Accent(zoneSpec))
+	fmt.Printf("  Times:    %s\n", ui.Accent(strings.Join(times, ", ")))
+	fmt.Printf("  Unit:     %s\n", ui.Accent(timerUnit))
+	return nil
 }
 
 // --- systemd unit management ---
@@ -159,6 +206,35 @@ func installSystemdUnits(execPath, configPath, timerSpec string) error {
 	return writeUnitFile(timerFile, timerTmpl, data)
 }
 
+// RescheduleTimer rewrites the timer unit with a single OnCalendar for nextRun
+// and restarts the timer. Used by active --service in auto mode.
+func RescheduleTimer(nextRun time.Time) error {
+	execPath, configPath, err := servicePaths()
+	if err != nil {
+		return err
+	}
+
+	// Single OnCalendar with exact date-time
+	spec := fmt.Sprintf("OnCalendar=%s\nPersistent=true", nextRun.Format("2006-01-02 15:04:05"))
+
+	dir := systemdUnitDir()
+	data := unitData{
+		ExecPath:   execPath,
+		ConfigPath: configPath,
+		TimerSpec:  spec,
+	}
+
+	timerFile := filepath.Join(dir, timerUnit)
+	if err := writeUnitFile(timerFile, timerTmpl, data); err != nil {
+		return err
+	}
+
+	if err := systemctlUser("daemon-reload"); err != nil {
+		return err
+	}
+	return systemctlUser("restart", timerUnit)
+}
+
 func writeUnitFile(path, tmpl string, data unitData) error {
 	f, err := os.Create(path)
 	if err != nil {
@@ -182,7 +258,7 @@ func systemctlUser(args ...string) error {
 	return nil
 }
 
-// --- time parsing (from old schedule.go) ---
+// --- time parsing ---
 
 func parseTimezone(spec string) (*time.Location, error) {
 	spec = strings.TrimSpace(spec)
@@ -351,4 +427,5 @@ WantedBy=timers.target
 
 func init() {
 	rootCmd.AddCommand(installCmd)
+	installCmd.Flags().Bool("auto", false, "Auto-schedule: calculate next run from quota reset time")
 }
