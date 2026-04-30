@@ -16,6 +16,9 @@ main
 *.swp
 *~
 
+# Build cache
+.go_cache/
+
 # Config
 config.yaml
 *.log
