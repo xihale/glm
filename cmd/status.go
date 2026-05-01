@@ -5,6 +5,7 @@ import (
 
 	"github.com/xihale/glm/pkg/config"
 	"github.com/xihale/glm/pkg/glm"
+	"github.com/xihale/glm/pkg/ui"
 
 	"github.com/spf13/cobra"
 )
@@ -21,7 +22,8 @@ var statusCmd = &cobra.Command{
 		quota, err := client.GetQuota()
 
 		if err != nil {
-			return fmt.Errorf("failed to get quota: %w", err)
+			ui.Error(fmt.Sprintf("Failed to get quota: %v", err))
+			return err
 		}
 
 		printQuotaStatus(quota)
@@ -30,19 +32,28 @@ var statusCmd = &cobra.Command{
 }
 
 func printQuotaStatus(q *glm.QuotaStatus) {
+	// Remaining color
+	color := ui.Green
+	if q.Remaining < 20 {
+		color = ui.Red
+	} else if q.Remaining < 50 {
+		color = ui.Yellow
+	}
+	pct := ui.Style(fmt.Sprintf("%d%%", q.Remaining), color, ui.Bold)
+
 	// Reset time
-	reset := "N/A"
+	reset := ui.Dimmed("N/A")
 	if !q.ResetTime.IsZero() {
 		until := glm.FormatTimeUntil(q.ResetTime)
 		at := q.ResetTime.Local().Format("15:04:05")
 		if until == "Passed" {
-			reset = fmt.Sprintf("passed, reset at %s", at)
+			reset = fmt.Sprintf("%s, reset at %s", ui.Dimmed("passed"), at)
 		} else {
 			reset = fmt.Sprintf("%s, reset at %s", until, at)
 		}
 	}
 
-	fmt.Printf("  %d%% (%s)\n", q.Remaining, reset)
+	fmt.Printf("  %s (%s)\n", pct, reset)
 }
 
 func init() {

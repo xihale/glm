@@ -40,11 +40,7 @@ With --service, runs as a daemon: activate, sleep until next run, repeat.`,
 		}
 
 		// One-shot mode
-		s := ui.NewSpinner("Activating...")
-		s.Start()
 		quota, err := client.Activate(force, false)
-		s.Stop()
-		fmt.Println()
 		if err != nil {
 			ui.Error(fmt.Sprintf("Activation failed: %v", err))
 			return err
