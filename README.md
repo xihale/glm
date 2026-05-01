@@ -21,6 +21,12 @@ glm service uninstall     # stop, disable, and remove systemd user units
 
 No daemon/crontab mode. Scheduling is handled by systemd user timers.
 
+> **Note:** User-level systemd services stop when you log out. Enable lingering to keep them running after logout:
+>
+> ```bash
+> loginctl enable-linger $(whoami)
+> ```
+
 ## Config
 
 Default path: `~/.config/glm/config.yaml`
