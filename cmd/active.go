@@ -78,11 +78,17 @@ func runDaemon(client *glm.Client, force bool) error {
 		}
 
 		log.Infof("Activated — %d%% remaining", quota.Remaining)
-		if !quota.ResetTime.IsZero() {
-			log.Infof("Reset at: %s (%s)",
-				quota.ResetTime.Local().Format("15:04:05"), glm.FormatTimeUntil(quota.ResetTime))
-		}
+	// Fetch fresh status to get updated reset time (may shift due to network)
+	fresh, ferr := client.GetQuota()
+	if ferr == nil && fresh != nil {
+		quota = fresh
+	}
 
+	log.Infof("Activated — %d%% remaining", quota.Remaining)
+	if !quota.ResetTime.IsZero() {
+		log.Infof("Reset at: %s (%s)",
+			quota.ResetTime.Local().Format("15:04:05"), glm.FormatTimeUntil(quota.ResetTime))
+	}
 		// Calculate next run
 		nextRun, err := nextActivationTime(quota)
 		if err != nil {
@@ -104,20 +110,36 @@ func runDaemon(client *glm.Client, force bool) error {
 	}
 }
 
+const imminentThreshold = 20 * time.Minute
+
 func nextActivationTime(quota *glm.QuotaStatus) (time.Time, error) {
 	sched := config.Current.Schedule
 
-	// Auto mode: next_reset + 30s
+	// Determine the "normal" next run time
+	var normal time.Time
 	if sched.Auto {
 		if quota.ResetTime.IsZero() {
-			// No reset info, default to 4 hours
 			return time.Now().Add(4 * time.Hour), nil
 		}
-		return quota.ResetTime.Add(30 * time.Second), nil
+		normal = quota.ResetTime
+	} else {
+		var err error
+		normal, err = nextScheduledTime(sched)
+		if err != nil {
+			return time.Time{}, err
+		}
 	}
 
-	// Manual mode: next scheduled time from config
-	return nextScheduledTime(sched)
+	// Smart override: if reset is imminent from now or from next run, activate at reset time
+	if !quota.ResetTime.IsZero() {
+		untilReset := time.Until(quota.ResetTime)
+		untilNext := time.Until(normal)
+		if untilReset > 0 && (untilReset < imminentThreshold || untilNext < imminentThreshold) {
+			return quota.ResetTime, nil
+		}
+	}
+
+	return normal, nil
 }
 
 func nextScheduledTime(sched config.ScheduleConfig) (time.Time, error) {
