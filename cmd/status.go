@@ -5,7 +5,6 @@ import (
 
 	"github.com/xihale/glm/pkg/config"
 	"github.com/xihale/glm/pkg/glm"
-	"github.com/xihale/glm/pkg/ui"
 
 	"github.com/spf13/cobra"
 )
@@ -18,17 +17,11 @@ var statusCmd = &cobra.Command{
 			return fmt.Errorf("no API key configured. Run 'glm login' first")
 		}
 
-		s := ui.NewSpinner("Fetching quota...")
-		s.Start()
-
 		client := glm.NewClient()
 		quota, err := client.GetQuota()
 
-		s.Stop()
-
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to get quota: %v", err))
-			return err
+			return fmt.Errorf("failed to get quota: %w", err)
 		}
 
 		printQuotaStatus(quota)
@@ -37,28 +30,19 @@ var statusCmd = &cobra.Command{
 }
 
 func printQuotaStatus(q *glm.QuotaStatus) {
-	// Remaining color
-	color := ui.Green
-	if q.Remaining < 20 {
-		color = ui.Red
-	} else if q.Remaining < 50 {
-		color = ui.Yellow
-	}
-	pct := ui.Style(fmt.Sprintf("%d%%", q.Remaining), color, ui.Bold)
-
 	// Reset time
-	reset := ui.Dimmed("N/A")
+	reset := "N/A"
 	if !q.ResetTime.IsZero() {
 		until := glm.FormatTimeUntil(q.ResetTime)
 		at := q.ResetTime.Local().Format("15:04:05")
 		if until == "Passed" {
-			reset = fmt.Sprintf("%s, reset at %s", ui.Dimmed("passed"), at)
+			reset = fmt.Sprintf("passed, reset at %s", at)
 		} else {
 			reset = fmt.Sprintf("%s, reset at %s", until, at)
 		}
 	}
 
-	fmt.Printf("  %s (%s)\n", pct, reset)
+	fmt.Printf("  %d%% (%s)\n", q.Remaining, reset)
 }
 
 func init() {
