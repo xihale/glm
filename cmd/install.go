@@ -42,11 +42,51 @@ Times accept H, H:M, or H:M:S format.`,
 		}
 
 		if len(args) < 2 {
+			// No mode specified: reuse an existing valid schedule from the
+			// config file (default path or --config) instead of forcing the
+			// user to reconfigure.
+			if !config.Current.Schedule.IsEmpty() {
+				return installExisting()
+			}
 			return fmt.Errorf("manual mode requires <timezone> <time> [time...], or use --auto")
 		}
 
 		return installManual(args[0], args[1:])
 	},
+}
+
+func installExisting() error {
+	sched := config.Current.Schedule
+
+	execPath, configPath, err := servicePaths()
+	if err != nil {
+		return err
+	}
+
+	if err := installServiceUnit(execPath, configPath); err != nil {
+		return err
+	}
+	if err := systemctlUser("daemon-reload"); err != nil {
+		return err
+	}
+	if err := systemctlUser("enable", "--now", serviceUnit); err != nil {
+		return err
+	}
+
+	configFile := viper.ConfigFileUsed()
+	if configFile == "" {
+		configFile = config.DefaultConfigPath()
+	}
+	ui.Success("Detected existing schedule, using it")
+	fmt.Printf("  Config: %s\n", ui.Accent(configFile))
+	if sched.Auto {
+		fmt.Printf("  Mode:   %s\n", ui.Accent("auto (self-driven daemon)"))
+	} else {
+		fmt.Printf("  Timezone: %s\n", ui.Accent(sched.Timezone))
+		fmt.Printf("  Times:    %s\n", ui.Accent(strings.Join(sched.Times, ", ")))
+	}
+	fmt.Printf("  Unit:     %s\n", ui.Accent(serviceUnit))
+	return nil
 }
 
 func installAuto() error {
