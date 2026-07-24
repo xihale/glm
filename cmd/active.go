@@ -32,12 +32,12 @@ With --service, runs as a daemon: activate, sleep until next run, repeat.`,
 		force, _ := cmd.Flags().GetBool("force")
 		serviceMode, _ := cmd.Flags().GetBool("service")
 
+		if serviceMode {
+			return runDaemon(debug, force)
+		}
+
 		client := glm.NewClient()
 		client.SetDebug(debug)
-
-		if serviceMode {
-			return runDaemon(client, force)
-		}
 
 		// One-shot mode
 		quota, err := client.Activate(force, false)
@@ -50,14 +50,23 @@ With --service, runs as a daemon: activate, sleep until next run, repeat.`,
 	},
 }
 
-func runDaemon(client *glm.Client, force bool) error {
+func runDaemon(debug, force bool) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	log.Infof("Daemon started (auto=%v manual=%v)",
-		config.Current.Schedule.Auto, !config.Current.Schedule.IsEmpty())
+	reloadCh := make(chan os.Signal, 1)
+	signal.Notify(reloadCh, syscall.SIGHUP)
 
 	for {
+		if err := config.Reload(); err != nil {
+			log.Errorf("Config reload failed, keeping current: %v", err)
+		}
+		client := glm.NewClient()
+		client.SetDebug(debug)
+
+		log.Infof("Daemon started (auto=%v manual=%v)",
+			config.Current.Schedule.Auto, !config.Current.Schedule.IsEmpty())
+
 		// Activate
 		log.Infof("Activating...")
 		quota, err := client.Activate(force, true)
@@ -68,23 +77,26 @@ func runDaemon(client *glm.Client, force bool) error {
 			case <-sigCh:
 				log.Infof("Received signal, shutting down")
 				return nil
+			case <-reloadCh:
+				log.Infof("Received SIGHUP, reloading config")
+				continue
 			case <-time.After(1 * time.Minute):
 				continue
 			}
 		}
 
-		log.Infof("Activated — %d%% remaining", quota.Remaining)
-	// Fetch fresh status to get updated reset time (may shift due to network)
-	fresh, ferr := client.GetQuota()
-	if ferr == nil && fresh != nil {
-		quota = fresh
-	}
+		// Fetch fresh status to get updated reset time (may shift due to network)
+		fresh, ferr := client.GetQuota()
+		if ferr == nil && fresh != nil {
+			quota = fresh
+		}
 
-	log.Infof("Activated — %d%% remaining", quota.Remaining)
-	if !quota.ResetTime.IsZero() {
-		log.Infof("Reset at: %s (%s)",
-			quota.ResetTime.Local().Format("15:04:05"), glm.FormatTimeUntil(quota.ResetTime))
-	}
+		log.Infof("Activated — %d%% remaining", quota.Remaining)
+		if !quota.ResetTime.IsZero() {
+			log.Infof("Reset at: %s (%s)",
+				quota.ResetTime.Local().Format("15:04:05"), glm.FormatTimeUntil(quota.ResetTime))
+		}
+
 		// Calculate next run
 		nextRun, err := nextActivationTime(quota)
 		if err != nil {
@@ -101,6 +113,9 @@ func runDaemon(client *glm.Client, force bool) error {
 		case <-sigCh:
 			log.Infof("Received signal, shutting down")
 			return nil
+		case <-reloadCh:
+			log.Infof("Received SIGHUP, reloading config")
+			continue
 		case <-time.After(wait):
 		}
 	}
