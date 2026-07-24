@@ -68,6 +68,20 @@ func InitConfig() {
 	}
 }
 
+// Reload re-reads the config file into Current. On any error it leaves
+// Current unchanged so callers keep running with the last good config.
+func Reload() error {
+	if err := viper.ReadInConfig(); err != nil {
+		return err
+	}
+	var fresh Config
+	if err := viper.Unmarshal(&fresh); err != nil {
+		return err
+	}
+	Current = fresh
+	return nil
+}
+
 func SaveConfig() error {
 	configFile := viper.ConfigFileUsed()
 	if configFile == "" {
