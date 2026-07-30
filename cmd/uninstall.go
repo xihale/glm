@@ -15,13 +15,25 @@ import (
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Uninstall systemd service",
-	Long:  `Stop, disable, and remove the systemd user service. Clears the schedule from config.`,
+	Long:  `Stop, disable, and remove the systemd service. Clears the schedule from config.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir := systemdUnitDir()
+		scope, err := detectScope()
+		if err != nil {
+			return err
+		}
+		// Under sudo (system scope), fix HOME so the schedule-clear targets the
+		// real user's config rather than /root.
+		if scope == scopeSystem {
+			if err := reinitUnderSudo(); err != nil {
+				return err
+			}
+		}
+
+		dir := systemdUnitDir(scope)
 		serviceFile := filepath.Join(dir, serviceUnit)
 
 		// Stop service
-		if err := systemctlUser("disable", "--now", serviceUnit); err != nil {
+		if err := systemctl(scope, "disable", "--now", serviceUnit); err != nil {
 			if !strings.Contains(err.Error(), "not loaded") {
 				ui.Warn(fmt.Sprintf("Stop service: %v", err))
 			}
@@ -39,7 +51,7 @@ var uninstallCmd = &cobra.Command{
 
 		// Daemon reload
 		if removed > 0 {
-			if err := systemctlUser("daemon-reload"); err != nil {
+			if err := systemctl(scope, "daemon-reload"); err != nil {
 				ui.Warn(fmt.Sprintf("Daemon reload: %v", err))
 			}
 		}
@@ -51,7 +63,7 @@ var uninstallCmd = &cobra.Command{
 			ui.Warn(fmt.Sprintf("Save config: %v", err))
 		}
 
-		ui.Success(fmt.Sprintf("Uninstalled (%d unit(s) removed)", removed))
+		ui.Success(fmt.Sprintf("Uninstalled %s service (%d unit(s) removed)", scope, removed))
 		return nil
 	},
 }

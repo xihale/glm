@@ -1,55 +1,76 @@
 # glm
 
-GLM API quota monitor and activation tool.
+GLM API quota monitor and activation tool, with systemd-based scheduling.
 
 ## Commands
 
 ```bash
-glm login [name]          # add/update account; prompts for name if omitted, then API key
-glm list                  # list accounts
-glm logout <name>         # remove account
-glm monitor [--debug]     # show quota
-glm active [-f] [--debug] # activate quota
-glm schedule set +8 09:00 # set daily activation schedule
-glm schedule show         # show schedule
-glm schedule clear        # clear schedule
-glm service install       # install/start systemd timer; mode=auto if no schedule, mode=schedule otherwise
-glm service run           # run one activation cycle; logs mode=auto or mode=schedule
-glm service stop          # stop and disable systemd user timer/service
-glm service uninstall     # stop, disable, and remove systemd user units
+glm login                 # set API key (prompts; or -k <key>)
+glm status                # show current quota
+glm active [-f]           # activate quota once (use --service to run as daemon)
+glm install --auto        # install the scheduler as a systemd service
+glm install +8 09:00 20:00 # install with a manual schedule (timezone + times)
+glm reload                # reload config without restarting (SIGHUP)
+glm uninstall             # stop, disable, and remove the service
 ```
 
-No daemon/crontab mode. Scheduling is handled by systemd user timers.
+`glm install` installs a **system service** by default (boot-persistent, no
+login required). Use `--user` to install a user service instead. The daemon
+runs `active --service`: activate, sleep until next run, repeat.
 
-> **Note:** User-level systemd services stop when you log out. Enable lingering to keep them running after logout:
->
-> ```bash
-> loginctl enable-linger $(whoami)
-> ```
+## Server deployment
+
+On a headless server, install as a **system service** so it survives logout
+and starts at boot — no lingering needed:
+
+```bash
+sudo glm install --auto
+```
+
+The service runs as the **invoking user** (resolved from `SUDO_USER`) and reads
+that user's config, so first run `glm login` as yourself, then `sudo glm
+install`. Under sudo, glm rewrites `HOME` to your real home so the config and
+schedule land in the right place.
+
+On a desktop or without root, use a **user service** instead (legacy behavior;
+needs `loginctl enable-linger` to survive logout):
+
+```bash
+glm install --user --auto
+```
+
+Inspect and reload:
+
+```bash
+systemctl status glm            # system scope (or: systemctl --user status glm)
+journalctl -u glm -f            # follow logs (or: journalctl --user -u glm)
+glm reload                      # re-read config without restarting
+glm uninstall                   # auto-detects scope and removes it
+```
 
 ## Config
 
 Default path: `~/.config/glm/config.yaml`
 
 ```yaml
-providers:
-  - name: work
-    type: glm
-    api_key: sk-xxxxx
-    enabled: true
+api_key: sk-xxxxx
+# base_url: https://...
+# proxy: http://...
 
 schedule:
-  timezone: +8
-  times:
-    - "09:00:00"
+  auto: true
+  # or explicit:
+  # timezone: +8
+  # times:
+  #   - "09:00:00"
+  #   - "20:00:00"
 ```
 
-Use custom config:
+Use a custom config path with `--config`:
 
 ```bash
-glm --config ./config.yaml login work
-glm --config ./config.yaml schedule set Asia/Shanghai 09:00
-glm --config ./config.yaml service install
+glm --config ./config.yaml login
+glm --config ./config.yaml install --auto
 ```
 
 ## Install

@@ -17,10 +17,14 @@ Only affects the systemd-managed daemon (installed via 'glm install').
 For ad-hoc runs, send SIGHUP manually: kill -HUP <pid>.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := systemctlUser("kill", "--signal=SIGHUP", serviceUnit); err != nil {
-			return fmt.Errorf("reload %s: %w\n(Is the service installed and running? Run 'glm install' first.)", serviceUnit, err)
+		scope, err := detectScope()
+		if err != nil {
+			return err
 		}
-		ui.Success(fmt.Sprintf("Sent reload signal to %s", serviceUnit))
+		if err := systemctl(scope, "kill", "--signal=SIGHUP", serviceUnit); err != nil {
+			return fmt.Errorf("reload %s (%s): %w\n(Is the service installed and running? Run 'glm install' first.)", serviceUnit, scope, err)
+		}
+		ui.Success(fmt.Sprintf("Sent reload signal to %s (%s)", serviceUnit, scope))
 		return nil
 	},
 }
