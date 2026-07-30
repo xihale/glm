@@ -6,16 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/xihale/glm/pkg/config"
 	"github.com/xihale/glm/pkg/ui"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Uninstall systemd service",
-	Long:  `Stop, disable, and remove the systemd service. Clears the schedule from config.`,
+	Long:  `Stop, disable, and remove the systemd service. Config is left untouched.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		scope, err := detectScope()
 		if err != nil {
@@ -54,13 +52,6 @@ var uninstallCmd = &cobra.Command{
 			if err := systemctl(scope, "daemon-reload"); err != nil {
 				ui.Warn(fmt.Sprintf("Daemon reload: %v", err))
 			}
-		}
-
-		// Clear schedule from config
-		config.Current.Schedule = config.ScheduleConfig{}
-		viper.Set("schedule", config.Current.Schedule)
-		if err := config.SaveConfig(); err != nil {
-			ui.Warn(fmt.Sprintf("Save config: %v", err))
 		}
 
 		ui.Success(fmt.Sprintf("Uninstalled %s service (%d unit(s) removed)", scope, removed))
