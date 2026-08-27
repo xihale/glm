@@ -98,8 +98,8 @@ func runDaemon(debug, force bool) error {
 		// static schedule, which may be hours away.
 		if quota.Remaining <= 0 {
 			wait := exhaustedPollInterval
-			if quota.ResetTime.After(time.Now()) {
-				wait = time.Until(quota.ResetTime) + resetRetryBuffer
+			if untilReset := time.Until(quota.ResetTime); untilReset+resetRetryBuffer > 0 {
+				wait = untilReset + resetRetryBuffer
 			}
 			if !exhausted {
 				exhausted = true
@@ -142,6 +142,10 @@ func runDaemon(debug, force bool) error {
 		}
 
 		wait := time.Until(nextRun)
+		if wait < minDaemonSleep {
+			// Reset may already have passed by now — never spin-loop on the API.
+			wait = minDaemonSleep
+		}
 		log.Infof("Next activation at %s (sleeping %s)",
 			nextRun.Local().Format("2006-01-02 15:04:05"), glm.FormatTimeUntil(nextRun))
 
@@ -160,44 +164,29 @@ func runDaemon(debug, force bool) error {
 
 const (
 	exhaustedPollInterval = 10 * time.Second
-	resetRetryBuffer      = 10 * time.Second
+	resetRetryBuffer      = 30 * time.Second
+	minDaemonSleep        = 30 * time.Second
 )
 
-const imminentThreshold = 20 * time.Minute
-
+// nextActivationTime returns when the daemon should next send a heartbeat.
+//
+// A heartbeat is only useful once the current 5h window has expired: before
+// the reset it either no-ops or anchors the window prematurely (and every
+// premature anchor shifts all later cycles that much earlier, compounding).
+// So whenever the API reports a reset time, wake just after it to anchor the
+// new window the moment it opens. Static schedules are only a fallback for
+// when no reset time is reported.
 func nextActivationTime(quota *glm.QuotaStatus) (time.Time, error) {
-	sched := config.Current.Schedule
-
-	// Determine the "normal" next run time
-	var normal time.Time
-	if sched.Auto {
-		if quota.ResetTime.IsZero() {
-			return time.Now().Add(4 * time.Hour), nil
-		}
-		normal = quota.ResetTime
-	} else {
-		var err error
-		normal, err = nextScheduledTime(sched)
-		if err != nil {
-			return time.Time{}, err
-		}
-	}
-
-	// Smart override: if reset is imminent from now or from next run, activate at reset time
 	if !quota.ResetTime.IsZero() {
-		untilReset := time.Until(quota.ResetTime)
-		untilNext := time.Until(normal)
-		if untilReset > 0 && quota.ResetTime.Before(normal) {
-			// Reset falls before the next scheduled run: wake just after it
-			// to anchor the new window instead of sleeping through the reset.
-			return quota.ResetTime.Add(resetRetryBuffer), nil
-		}
-		if untilReset > 0 && (untilReset < imminentThreshold || untilNext < imminentThreshold) {
-			return quota.ResetTime, nil
-		}
+		return quota.ResetTime.Add(resetRetryBuffer), nil
 	}
 
-	return normal, nil
+	sched := config.Current.Schedule
+	if sched.Auto {
+		// No reset reported: re-check halfway into a nominal cycle.
+		return time.Now().Add(4 * time.Hour), nil
+	}
+	return nextScheduledTime(sched)
 }
 
 func nextScheduledTime(sched config.ScheduleConfig) (time.Time, error) {
