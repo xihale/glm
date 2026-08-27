@@ -18,7 +18,7 @@ const (
 	QuotaEndpoint     = "/api/monitor/usage/quota/limit"
 	HeartbeatEndpoint = "/api/coding/paas/v4/chat/completions"
 	UserAgent         = "OpenClaw/2026.3.19"
-	HeartbeatModel    = "glm-4.7"
+	HeartbeatModel    = "glm-5.3-flash"
 	HeartbeatPrompt   = "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK."
 
 	// Activate verification
