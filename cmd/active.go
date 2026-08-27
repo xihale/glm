@@ -87,7 +87,8 @@ func runDaemon(debug, force bool) error {
 			}
 		}
 
-		// Fetch fresh status to get updated reset time (may shift due to network)
+		// Re-read nextResetTime after the heartbeat: whatever reset time the
+		// API now reports (new or user-anchored window) drives the schedule.
 		fresh, ferr := client.GetQuota()
 		if ferr == nil && fresh != nil {
 			quota = fresh
@@ -98,8 +99,8 @@ func runDaemon(debug, force bool) error {
 		// static schedule, which may be hours away.
 		if quota.Remaining <= 0 {
 			wait := exhaustedPollInterval
-			if untilReset := time.Until(quota.ResetTime); untilReset+resetRetryBuffer > 0 {
-				wait = untilReset + resetRetryBuffer
+			if untilReset := time.Until(quota.ResetTime); untilReset > 0 {
+				wait = untilReset
 			}
 			if !exhausted {
 				exhausted = true
@@ -164,8 +165,7 @@ func runDaemon(debug, force bool) error {
 
 const (
 	exhaustedPollInterval = 10 * time.Second
-	resetRetryBuffer      = 30 * time.Second
-	minDaemonSleep        = 30 * time.Second
+	minDaemonSleep        = 10 * time.Second
 )
 
 // nextActivationTime returns when the daemon should next send a heartbeat.
@@ -173,12 +173,15 @@ const (
 // A heartbeat is only useful once the current 5h window has expired: before
 // the reset it either no-ops or anchors the window prematurely (and every
 // premature anchor shifts all later cycles that much earlier, compounding).
-// So whenever the API reports a reset time, wake just after it to anchor the
-// new window the moment it opens. Static schedules are only a fallback for
-// when no reset time is reported.
+// So whenever the API reports a reset time, wake exactly at the reset.
+// Wake-up plus round-trip naturally lands the heartbeat a hair past the
+// boundary; if the API still reports the expired window, the recomputed
+// target falls into the past and the min-sleep guard re-checks shortly
+// after — self-correcting without hammering the API. Static schedules are
+// only a fallback for when no reset time is reported.
 func nextActivationTime(quota *glm.QuotaStatus) (time.Time, error) {
 	if !quota.ResetTime.IsZero() {
-		return quota.ResetTime.Add(resetRetryBuffer), nil
+		return quota.ResetTime, nil
 	}
 
 	sched := config.Current.Schedule
