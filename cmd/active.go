@@ -57,6 +57,10 @@ func runDaemon(debug, force bool) error {
 	reloadCh := make(chan os.Signal, 1)
 	signal.Notify(reloadCh, syscall.SIGHUP)
 
+	log.Infof("Daemon started (auto=%v manual=%v)",
+		config.Current.Schedule.Auto, !config.Current.Schedule.IsEmpty())
+
+	exhausted := false
 	for {
 		if err := config.Reload(); err != nil {
 			log.Errorf("Config reload failed, keeping current: %v", err)
@@ -64,11 +68,9 @@ func runDaemon(debug, force bool) error {
 		client := glm.NewClient()
 		client.SetDebug(debug)
 
-		log.Infof("Daemon started (auto=%v manual=%v)",
-			config.Current.Schedule.Auto, !config.Current.Schedule.IsEmpty())
-
-		// Activate
-		log.Infof("Activating...")
+		if !exhausted {
+			log.Infof("Activating...")
+		}
 		quota, err := client.Activate(force, true)
 		if err != nil {
 			log.Errorf("Activation failed: %v", err)
@@ -89,6 +91,41 @@ func runDaemon(debug, force bool) error {
 		fresh, ferr := client.GetQuota()
 		if ferr == nil && fresh != nil {
 			quota = fresh
+		}
+
+		// Quota exhausted: a heartbeat cannot refresh it. Wait for the reset
+		// time if the API reports one, otherwise poll — never fall back to the
+		// static schedule, which may be hours away.
+		if quota.Remaining <= 0 {
+			wait := exhaustedPollInterval
+			if quota.ResetTime.After(time.Now()) {
+				wait = time.Until(quota.ResetTime) + resetRetryBuffer
+			}
+			if !exhausted {
+				exhausted = true
+				if quota.ResetTime.After(time.Now()) {
+					log.Infof("Quota exhausted — waiting for reset at %s (%s)",
+						quota.ResetTime.Local().Format("2006-01-02 15:04:05"),
+						glm.FormatTimeUntil(quota.ResetTime))
+				} else {
+					log.Infof("Quota exhausted (no reset time reported) — polling every %s",
+						exhaustedPollInterval)
+				}
+			}
+			select {
+			case <-sigCh:
+				log.Infof("Received signal, shutting down")
+				return nil
+			case <-reloadCh:
+				log.Infof("Received SIGHUP, reloading config")
+				continue
+			case <-time.After(wait):
+			}
+			continue
+		}
+		if exhausted {
+			log.Infof("Quota available again")
+			exhausted = false
 		}
 
 		log.Infof("Activated — %d%% remaining", quota.Remaining)
@@ -121,6 +158,11 @@ func runDaemon(debug, force bool) error {
 	}
 }
 
+const (
+	exhaustedPollInterval = 10 * time.Second
+	resetRetryBuffer      = 10 * time.Second
+)
+
 const imminentThreshold = 20 * time.Minute
 
 func nextActivationTime(quota *glm.QuotaStatus) (time.Time, error) {
@@ -145,6 +187,11 @@ func nextActivationTime(quota *glm.QuotaStatus) (time.Time, error) {
 	if !quota.ResetTime.IsZero() {
 		untilReset := time.Until(quota.ResetTime)
 		untilNext := time.Until(normal)
+		if untilReset > 0 && quota.ResetTime.Before(normal) {
+			// Reset falls before the next scheduled run: wake just after it
+			// to anchor the new window instead of sleeping through the reset.
+			return quota.ResetTime.Add(resetRetryBuffer), nil
+		}
 		if untilReset > 0 && (untilReset < imminentThreshold || untilNext < imminentThreshold) {
 			return quota.ResetTime, nil
 		}
@@ -221,6 +268,20 @@ func indexOf(s, sep string) int {
 }
 
 func printQuotaResult(q *glm.QuotaStatus) {
+	if q.Remaining <= 0 {
+		reset := "unknown"
+		if !q.ResetTime.IsZero() {
+			reset = q.ResetTime.Local().Format("15:04:05")
+		}
+		ui.Error(fmt.Sprintf("Quota exhausted (0%% remaining) — nothing to activate until reset (%s)", reset))
+		if !q.ResetTime.IsZero() {
+			fmt.Printf("  Reset at: %s (%s)\n",
+				ui.Style(q.ResetTime.Local().Format("15:04:05"), ui.Cyan, ui.Bold),
+				ui.Dimmed(glm.FormatTimeUntil(q.ResetTime)))
+		}
+		return
+	}
+
 	if q.Remaining >= 100 {
 		ui.Info(fmt.Sprintf("Quota: %s remaining (may already be fresh)",
 			ui.Style("100%", ui.Green, ui.Bold)))

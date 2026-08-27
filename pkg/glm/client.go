@@ -32,6 +32,7 @@ type QuotaStatus struct {
 	Limit     int64
 	Remaining int64
 	ResetTime time.Time
+	Found     bool
 	Raw       string
 }
 
@@ -77,10 +78,14 @@ func (c *Client) GetQuota() (*QuotaStatus, error) {
 
 	var qResp quotaResponse
 	if err := json.Unmarshal(body, &qResp); err != nil {
-		return &QuotaStatus{Raw: string(body)}, nil
+		return nil, fmt.Errorf("parse quota response: %w (body: %.200s)", err, body)
 	}
 
-	return parseQuotaResponse(body, qResp), nil
+	status := parseQuotaResponse(body, qResp)
+	if !status.Found {
+		return nil, fmt.Errorf("no quota limits in response (body: %.200s)", body)
+	}
+	return status, nil
 }
 
 func (c *Client) SendHeartbeat() error {
@@ -123,7 +128,9 @@ func (c *Client) Activate(force bool, serviceMode bool) (*QuotaStatus, error) {
 		return nil, fmt.Errorf("get quota: %w", err)
 	}
 
-	// Already active and not forcing
+	// Already active and not forcing. Note: 0% (exhausted) also lands here —
+	// a heartbeat cannot refresh an exhausted quota. Callers (daemon) must
+	// check Remaining <= 0 themselves and wait for the reset.
 	if !force && quota.Remaining < 100 {
 		return quota, nil
 	}
@@ -240,6 +247,7 @@ func parseQuotaResponse(raw []byte, qResp quotaResponse) *QuotaStatus {
 		Limit:     100,
 		Remaining: remaining,
 		ResetTime: resetTime,
+		Found:     found,
 		Raw:       string(raw),
 	}
 }
