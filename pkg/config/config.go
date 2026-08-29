@@ -28,6 +28,12 @@ func (s ScheduleConfig) IsEmpty() bool {
 	return !s.Auto && (strings.TrimSpace(s.Timezone) == "" || len(s.Times) == 0)
 }
 
+// Manual reports whether explicit activation times are configured, as
+// opposed to Auto mode or no schedule at all.
+func (s ScheduleConfig) Manual() bool {
+	return !s.Auto && len(s.Times) > 0
+}
+
 var (
 	CfgFile string
 	Current Config

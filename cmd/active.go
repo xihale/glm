@@ -58,9 +58,12 @@ func runDaemon(debug, force bool) error {
 	signal.Notify(reloadCh, syscall.SIGHUP)
 
 	log.Infof("Daemon started (auto=%v manual=%v)",
-		config.Current.Schedule.Auto, !config.Current.Schedule.IsEmpty())
+		config.Current.Schedule.Auto, config.Current.Schedule.Manual())
 
 	exhausted := false
+	// True when the current sleep targets a reported reset: on wake, a few
+	// seconds of leftover wait is a normal landing, not drift to re-decide.
+	resetTarget := false
 	for {
 		if err := config.Reload(); err != nil {
 			log.Errorf("Config reload failed, keeping current: %v", err)
@@ -68,59 +71,110 @@ func runDaemon(debug, force bool) error {
 		client := glm.NewClient()
 		client.SetDebug(debug)
 
-		if !exhausted {
-			log.Infof("Activating...")
-		}
-		quota, err := client.Activate(force, true)
+		// Query first, decide second: the heartbeat only fires once this
+		// quota check says the window is actually fresh. Waking straight
+		// into a heartbeat would anchor a window that is still hours from
+		// its reset when the API's timing drifted.
+		quota, err := client.GetQuota()
 		if err != nil {
-			log.Errorf("Activation failed: %v", err)
-			// Back off and retry
-			select {
-			case <-sigCh:
+			log.Errorf("Get quota failed: %v", err)
+			switch sleepOr(sigCh, reloadCh, time.Minute) {
+			case sleepSignal:
 				log.Infof("Received signal, shutting down")
 				return nil
-			case <-reloadCh:
+			case sleepReload:
 				log.Infof("Received SIGHUP, reloading config")
-				continue
-			case <-time.After(1 * time.Minute):
+			}
+			continue
+		}
+
+		if quota.Remaining >= 100 || force {
+			log.Infof("Activating...")
+			quota, err = client.Activate(force, false)
+			if err != nil {
+				log.Errorf("Activation failed: %v", err)
+				switch sleepOr(sigCh, reloadCh, time.Minute) {
+				case sleepSignal:
+					log.Infof("Received signal, shutting down")
+					return nil
+				case sleepReload:
+					log.Infof("Received SIGHUP, reloading config")
+				}
 				continue
 			}
 		}
 
-		// Re-read nextResetTime after the heartbeat: whatever reset time the
-		// API now reports (new or user-anchored window) drives the schedule.
-		fresh, ferr := client.GetQuota()
-		if ferr == nil && fresh != nil {
-			quota = fresh
-		}
-
-		// Quota exhausted: a heartbeat cannot refresh it. Wait for the reset
-		// time if the API reports one, otherwise poll — never fall back to the
-		// static schedule, which may be hours away.
+		// Quota exhausted: a heartbeat cannot refresh it. The reported reset
+		// decides the wake: within scheduleNearThreshold of the next schedule
+		// point it is taken (hold, then anchor right at the reset); farther
+		// out it is skipped — the schedule point anchors instead, and the
+		// quota (which auto-restores at the reset) sits un-anchored meanwhile.
+		// Without a manual schedule the daemon always waits out the reset;
+		// without a reset time it polls.
 		if quota.Remaining <= 0 {
-			wait := exhaustedPollInterval
-			if untilReset := time.Until(quota.ResetTime); untilReset > 0 {
-				wait = untilReset
-			}
-			if !exhausted {
-				exhausted = true
-				if quota.ResetTime.After(time.Now()) {
-					log.Infof("Quota exhausted — waiting for reset at %s (%s)",
-						quota.ResetTime.Local().Format("2006-01-02 15:04:05"),
-						glm.FormatTimeUntil(quota.ResetTime))
-				} else {
+			untilReset := time.Until(quota.ResetTime)
+			schedPoint, near := resetNearSchedule(quota.ResetTime)
+			var wait time.Duration
+			switch {
+			case untilReset <= 0:
+				if !exhausted {
+					exhausted = true
 					log.Infof("Quota exhausted (no reset time reported) — polling every %s",
 						exhaustedPollInterval)
 				}
+				wait = exhaustedPollInterval
+
+			case resetTarget && untilReset <= imminentWindow:
+				// Normal landing: this wake was planned for this reset and
+				// only seconds are left — hold for it, don't re-decide.
+				if !exhausted {
+					exhausted = true
+					log.Infof("Quota exhausted — reset landing in %s, holding",
+						untilReset.Round(time.Second))
+				}
+				wait = untilReset + time.Second
+
+			case near:
+				if !exhausted {
+					exhausted = true
+					log.Infof("Quota exhausted — reset at %s is within %v of schedule %s — taking it",
+						quota.ResetTime.Local().Format("15:04:05"),
+						scheduleNearThreshold,
+						schedPoint.Local().Format("15:04:05"))
+				}
+				resetTarget = true
+				wait = time.Until(quota.ResetTime) - resetQueryLead
+				if wait < 0 {
+					wait = 0
+				}
+
+			case !schedPoint.IsZero():
+				if !exhausted {
+					exhausted = true
+					log.Infof("Quota exhausted — reset at %s is far from schedule %s, sleeping to the schedule instead",
+						quota.ResetTime.Local().Format("15:04:05"),
+						schedPoint.Local().Format("15:04:05"))
+				}
+				resetTarget = false
+				wait = time.Until(schedPoint)
+
+			default:
+				if !exhausted {
+					exhausted = true
+					log.Infof("Quota exhausted — waiting for reset at %s (%s)",
+						quota.ResetTime.Local().Format("2006-01-02 15:04:05"),
+						glm.FormatTimeUntil(quota.ResetTime))
+				}
+				resetTarget = true
+				wait = untilReset
 			}
-			select {
-			case <-sigCh:
+
+			switch sleepOr(sigCh, reloadCh, wait) {
+			case sleepSignal:
 				log.Infof("Received signal, shutting down")
 				return nil
-			case <-reloadCh:
+			case sleepReload:
 				log.Infof("Received SIGHUP, reloading config")
-				continue
-			case <-time.After(wait):
 			}
 			continue
 		}
@@ -128,37 +182,36 @@ func runDaemon(debug, force bool) error {
 			log.Infof("Quota available again")
 			exhausted = false
 		}
-
-		log.Infof("Activated — %d%% remaining", quota.Remaining)
-		if !quota.ResetTime.IsZero() {
-			log.Infof("Reset at: %s (%s)",
-				quota.ResetTime.Local().Format("15:04:05"), glm.FormatTimeUntil(quota.ResetTime))
-		}
+		resetTarget = false
 
 		// Calculate next run
-		nextRun, err := nextActivationTime(quota)
+		next, atReset, err := nextWake(quota)
 		if err != nil {
 			log.Errorf("Calculate next run: %v", err)
 			return err
 		}
 
-		wait := time.Until(nextRun)
-		if wait < minDaemonSleep {
-			// Reset may already have passed by now — never spin-loop on the API.
+		wait := time.Until(next)
+		if atReset {
+			// Wake a few seconds early so the quota query lands just before
+			// the boundary and the grab decision runs on fresh data.
+			wait -= resetQueryLead
+		} else if wait < minDaemonSleep {
+			// Target may already have passed by now — never spin-loop on the API.
 			wait = minDaemonSleep
 		}
+		if wait < 0 {
+			wait = 0
+		}
 		log.Infof("Next activation at %s (sleeping %s)",
-			nextRun.Local().Format("2006-01-02 15:04:05"), glm.FormatTimeUntil(nextRun))
+			next.Local().Format("2006-01-02 15:04:05"), glm.FormatTimeUntil(next))
 
-		// Sleep until next run or signal
-		select {
-		case <-sigCh:
+		switch sleepOr(sigCh, reloadCh, wait) {
+		case sleepSignal:
 			log.Infof("Received signal, shutting down")
 			return nil
-		case <-reloadCh:
+		case sleepReload:
 			log.Infof("Received SIGHUP, reloading config")
-			continue
-		case <-time.After(wait):
 		}
 	}
 }
@@ -166,30 +219,100 @@ func runDaemon(debug, force bool) error {
 const (
 	exhaustedPollInterval = 10 * time.Second
 	minDaemonSleep        = 10 * time.Second
+	// Manual-schedule rule: a reported reset within ±this of the next
+	// schedule point is taken (wake at the reset, anchor there); resets
+	// farther from the schedule grid are skipped — the next schedule point
+	// anchors instead.
+	scheduleNearThreshold = 90 * time.Minute
+	// Reset wakes fire this many seconds early so the quota query lands
+	// just before the boundary and the decision runs on fresh data.
+	resetQueryLead = 5 * time.Second
+	// A reset this close when we woke for it is a normal landing: hold the
+	// few remaining seconds instead of re-running the decision.
+	imminentWindow = 30 * time.Second
 )
 
-// nextActivationTime returns when the daemon should next send a heartbeat.
+type sleepOutcome int
+
+const (
+	sleepDone sleepOutcome = iota
+	sleepSignal
+	sleepReload
+)
+
+// sleepOr waits for d, interrupted by shutdown or config-reload signals.
+func sleepOr(sigCh, reloadCh chan os.Signal, d time.Duration) sleepOutcome {
+	if d < 0 {
+		d = 0
+	}
+	select {
+	case <-sigCh:
+		return sleepSignal
+	case <-reloadCh:
+		return sleepReload
+	case <-time.After(d):
+		return sleepDone
+	}
+}
+
+// nextWake returns when the daemon should next wake, and whether that target
+// is a reported reset (woken resetQueryLead early to query before deciding).
 //
 // A heartbeat is only useful once the current 5h window has expired: before
 // the reset it either no-ops or anchors the window prematurely (and every
 // premature anchor shifts all later cycles that much earlier, compounding).
-// So whenever the API reports a reset time, wake exactly at the reset.
-// Wake-up plus round-trip naturally lands the heartbeat a hair past the
-// boundary; if the API still reports the expired window, the recomputed
-// target falls into the past and the min-sleep guard re-checks shortly
-// after — self-correcting without hammering the API. Static schedules are
-// only a fallback for when no reset time is reported.
-func nextActivationTime(quota *glm.QuotaStatus) (time.Time, error) {
+// So with a reported reset the daemon wakes at the reset — unless a manual
+// schedule is configured and the reset lies farther than scheduleNearThreshold
+// from the next schedule point: anchoring that far from any scheduled use is
+// wasted and drifts the whole cadence, so the schedule point takes the anchor
+// instead. Resets near the grid keep the reset wake. With no reset time, the
+// manual schedule (or the auto 4h re-check) applies.
+func nextWake(quota *glm.QuotaStatus) (time.Time, bool, error) {
+	sched := config.Current.Schedule
 	if !quota.ResetTime.IsZero() {
-		return quota.ResetTime, nil
+		if sched.Manual() {
+			s, err := nextScheduledTime(sched)
+			if err != nil {
+				log.Errorf("Next scheduled time: %v — keeping reset wake", err)
+			} else if absDuration(quota.ResetTime.Sub(s)) > scheduleNearThreshold {
+				log.Infof("Reset at %s is far from schedule %s — following schedule instead",
+					quota.ResetTime.Local().Format("15:04:05"),
+					s.Local().Format("15:04:05"))
+				return s, false, nil
+			}
+		}
+		return quota.ResetTime, true, nil
 	}
 
-	sched := config.Current.Schedule
 	if sched.Auto {
 		// No reset reported: re-check halfway into a nominal cycle.
-		return time.Now().Add(4 * time.Hour), nil
+		return time.Now().Add(4 * time.Hour), false, nil
 	}
-	return nextScheduledTime(sched)
+	s, err := nextScheduledTime(sched)
+	return s, false, err
+}
+
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
+}
+
+// resetNearSchedule reports the next schedule point and whether reset lies
+// within scheduleNearThreshold of it. Only manual schedules participate;
+// without one the daemon always wakes at the reset (zero schedule point).
+func resetNearSchedule(reset time.Time) (time.Time, bool) {
+	sched := config.Current.Schedule
+	if !sched.Manual() {
+		return time.Time{}, false
+	}
+	s, err := nextScheduledTime(sched)
+	if err != nil {
+		log.Errorf("Next scheduled time: %v", err)
+		return time.Time{}, false
+	}
+	return s, absDuration(reset.Sub(s)) <= scheduleNearThreshold
 }
 
 func nextScheduledTime(sched config.ScheduleConfig) (time.Time, error) {
