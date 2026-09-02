@@ -105,15 +105,15 @@ func runDaemon(debug, force bool) error {
 		}
 
 		// Quota exhausted: a heartbeat cannot refresh it. The reported reset
-		// decides the wake: within scheduleNearThreshold of the next schedule
-		// point it is taken (hold, then anchor right at the reset); farther
-		// out it is skipped — the schedule point anchors instead, and the
-		// quota (which auto-restores at the reset) sits un-anchored meanwhile.
-		// Without a manual schedule the daemon always waits out the reset;
-		// without a reset time it polls.
+		// decides the wake: within scheduleNearThreshold of the nearest
+		// schedule point it is taken (hold, then anchor right at the reset);
+		// farther out it is skipped — the schedule point anchors instead, and
+		// the quota (which auto-restores at the reset) sits un-anchored
+		// meanwhile. Without a manual schedule the daemon always waits out
+		// the reset; without a reset time it polls.
 		if quota.Remaining <= 0 {
 			untilReset := time.Until(quota.ResetTime)
-			schedPoint, near := resetNearSchedule(quota.ResetTime)
+			ref, schedPoint, near := resetNearSchedule(quota.ResetTime)
 			var wait time.Duration
 			switch {
 			case untilReset <= 0:
@@ -140,7 +140,7 @@ func runDaemon(debug, force bool) error {
 					log.Infof("Quota exhausted — reset at %s is within %v of schedule %s — taking it",
 						quota.ResetTime.Local().Format("15:04:05"),
 						scheduleNearThreshold,
-						schedPoint.Local().Format("15:04:05"))
+						ref.Local().Format("15:04:05"))
 				}
 				resetTarget = true
 				wait = time.Until(quota.ResetTime) - resetQueryLead
@@ -153,7 +153,7 @@ func runDaemon(debug, force bool) error {
 					exhausted = true
 					log.Infof("Quota exhausted — reset at %s is far from schedule %s, sleeping to the schedule instead",
 						quota.ResetTime.Local().Format("15:04:05"),
-						schedPoint.Local().Format("15:04:05"))
+						ref.Local().Format("15:04:05"))
 				}
 				resetTarget = false
 				wait = time.Until(schedPoint)
@@ -219,7 +219,7 @@ func runDaemon(debug, force bool) error {
 const (
 	exhaustedPollInterval = 10 * time.Second
 	minDaemonSleep        = 10 * time.Second
-	// Manual-schedule rule: a reported reset within ±this of the next
+	// Manual-schedule rule: a reported reset within ±this of the nearest
 	// schedule point is taken (wake at the reset, anchor there); resets
 	// farther from the schedule grid are skipped — the next schedule point
 	// anchors instead.
@@ -263,7 +263,7 @@ func sleepOr(sigCh, reloadCh chan os.Signal, d time.Duration) sleepOutcome {
 // premature anchor shifts all later cycles that much earlier, compounding).
 // So with a reported reset the daemon wakes at the reset — unless a manual
 // schedule is configured and the reset lies farther than scheduleNearThreshold
-// from the next schedule point: anchoring that far from any scheduled use is
+// from the nearest schedule point: anchoring that far from any scheduled use is
 // wasted and drifts the whole cadence, so the schedule point takes the anchor
 // instead. Resets near the grid keep the reset wake. With no reset time, the
 // manual schedule (or the auto 4h re-check) applies.
@@ -274,10 +274,12 @@ func nextWake(quota *glm.QuotaStatus) (time.Time, bool, error) {
 			s, err := nextScheduledTime(sched)
 			if err != nil {
 				log.Errorf("Next scheduled time: %v — keeping reset wake", err)
-			} else if absDuration(quota.ResetTime.Sub(s)) > scheduleNearThreshold {
+			} else if c, err := closestScheduledTime(sched, quota.ResetTime); err != nil {
+				log.Errorf("Closest scheduled time: %v — keeping reset wake", err)
+			} else if absDuration(quota.ResetTime.Sub(c)) > scheduleNearThreshold {
 				log.Infof("Reset at %s is far from schedule %s — following schedule instead",
 					quota.ResetTime.Local().Format("15:04:05"),
-					s.Local().Format("15:04:05"))
+					c.Local().Format("15:04:05"))
 				return s, false, nil
 			}
 		}
@@ -299,20 +301,27 @@ func absDuration(d time.Duration) time.Duration {
 	return d
 }
 
-// resetNearSchedule reports the next schedule point and whether reset lies
-// within scheduleNearThreshold of it. Only manual schedules participate;
-// without one the daemon always wakes at the reset (zero schedule point).
-func resetNearSchedule(reset time.Time) (time.Time, bool) {
+// resetNearSchedule evaluates a reported reset against the manual schedule
+// grid. ref is the grid occurrence nearest the reset and anchors the
+// scheduleNearThreshold comparison; schedPoint is the next occurrence after
+// now, where a skipped reset defers the wake to. Without a manual schedule
+// both are zero and the daemon always wakes at the reset.
+func resetNearSchedule(reset time.Time) (ref, schedPoint time.Time, near bool) {
 	sched := config.Current.Schedule
 	if !sched.Manual() {
-		return time.Time{}, false
+		return time.Time{}, time.Time{}, false
 	}
 	s, err := nextScheduledTime(sched)
 	if err != nil {
 		log.Errorf("Next scheduled time: %v", err)
-		return time.Time{}, false
+		return time.Time{}, time.Time{}, false
 	}
-	return s, absDuration(reset.Sub(s)) <= scheduleNearThreshold
+	c, err := closestScheduledTime(sched, reset)
+	if err != nil {
+		log.Errorf("Closest scheduled time: %v", err)
+		return time.Time{}, s, false
+	}
+	return c, s, absDuration(reset.Sub(c)) <= scheduleNearThreshold
 }
 
 func nextScheduledTime(sched config.ScheduleConfig) (time.Time, error) {
@@ -349,6 +358,46 @@ func nextScheduledTime(sched config.ScheduleConfig) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("no valid times in schedule")
 	}
 	return earliest, nil
+}
+
+// closestScheduledTime returns the schedule occurrence nearest to t, searching
+// a day on either side of it. Reset-vs-schedule decisions must compare against
+// this, not the next occurrence after now: the daemon wakes exactly on a
+// schedule point, so a reset landing seconds past it belongs to that point —
+// measured against the next point it is always ~5h away and would be skipped
+// on every wake.
+func closestScheduledTime(sched config.ScheduleConfig, t time.Time) (time.Time, error) {
+	loc, err := parseTimezone(sched.Timezone)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("bad timezone %q: %w", sched.Timezone, err)
+	}
+
+	t = t.In(loc)
+	var nearest time.Time
+	var minDiff time.Duration
+
+	for _, tt := range sched.Times {
+		parts := splitTime(tt)
+		if len(parts) != 3 {
+			continue
+		}
+		h, _ := parseRange(parts[0], 0, 23)
+		m, _ := parseRange(parts[1], 0, 59)
+		s, _ := parseRange(parts[2], 0, 59)
+
+		for _, dayOffset := range []int{-1, 0, 1} {
+			candidate := time.Date(t.Year(), t.Month(), t.Day(), h, m, s, 0, loc).AddDate(0, 0, dayOffset)
+			diff := absDuration(candidate.Sub(t))
+			if nearest.IsZero() || diff < minDiff {
+				nearest, minDiff = candidate, diff
+			}
+		}
+	}
+
+	if nearest.IsZero() {
+		return time.Time{}, fmt.Errorf("no valid times in schedule")
+	}
+	return nearest, nil
 }
 
 func splitTime(s string) []string {
