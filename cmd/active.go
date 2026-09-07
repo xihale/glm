@@ -64,6 +64,9 @@ func runDaemon(debug, force bool) error {
 	// True when the current sleep targets a reported reset: on wake, a few
 	// seconds of leftover wait is a normal landing, not drift to re-decide.
 	resetTarget := false
+	// Instant of the daemon's most recent heartbeat. A reported window no
+	// newer than this was not moved by our own anchor — see the stale check.
+	var lastAnchor time.Time
 	for {
 		if err := config.Reload(); err != nil {
 			log.Errorf("Config reload failed, keeping current: %v", err)
@@ -88,9 +91,28 @@ func runDaemon(debug, force bool) error {
 			continue
 		}
 
-		if quota.Remaining >= 100 || force {
+		// A live window (reset still ahead) must not be heartbeated: the
+		// request is absorbed by it, or worse re-anchors it early. But once
+		// the reset has passed — or no reset is reported at all while quota
+		// remains, which is how the API shows a lapsed window — only a
+		// request re-anchors it. Waiting for the API to show 100% waits for
+		// a request that never comes: this daemon is the request. A window
+		// no newer than our own last heartbeat is declined — re-anchoring it
+		// would loop; the schedule decides instead.
+		stale := quota.Remaining > 0 &&
+			(quota.ResetTime.IsZero() || !quota.ResetTime.After(time.Now())) &&
+			quota.ResetTime.After(lastAnchor)
+		if quota.Remaining >= 100 || stale || force {
+			if stale {
+				lapse := "no reset reported"
+				if !quota.ResetTime.IsZero() {
+					lapse = fmt.Sprintf("reset %s passed",
+						quota.ResetTime.Local().Format("15:04:05"))
+				}
+				log.Infof("Window lapsed (%s, %d%% reported) — re-anchoring", lapse, quota.Remaining)
+			}
 			log.Infof("Activating...")
-			quota, err = client.Activate(force, false)
+			quota, err = client.Activate(force || stale, false)
 			if err != nil {
 				log.Errorf("Activation failed: %v", err)
 				switch sleepOr(sigCh, reloadCh, time.Minute) {
@@ -102,6 +124,7 @@ func runDaemon(debug, force bool) error {
 				}
 				continue
 			}
+			lastAnchor = time.Now()
 		}
 
 		// Quota exhausted: a heartbeat cannot refresh it. The reported reset
@@ -194,8 +217,13 @@ func runDaemon(debug, force bool) error {
 		wait := time.Until(next)
 		if atReset {
 			// Wake a few seconds early so the quota query lands just before
-			// the boundary and the grab decision runs on fresh data.
-			wait -= resetQueryLead
+			// the boundary and the grab decision runs on fresh data. Once
+			// inside the lead window the full remainder to the boundary is
+			// slept out — subtracting the lead again yields 0 and hot-loops
+			// the quota API until the reset.
+			if wait > resetQueryLead {
+				wait -= resetQueryLead
+			}
 		} else if wait < minDaemonSleep {
 			// Target may already have passed by now — never spin-loop on the API.
 			wait = minDaemonSleep
@@ -265,11 +293,14 @@ func sleepOr(sigCh, reloadCh chan os.Signal, d time.Duration) sleepOutcome {
 // schedule is configured and the reset lies farther than scheduleNearThreshold
 // from the nearest schedule point: anchoring that far from any scheduled use is
 // wasted and drifts the whole cadence, so the schedule point takes the anchor
-// instead. Resets near the grid keep the reset wake. With no reset time, the
-// manual schedule (or the auto 4h re-check) applies.
+// instead. Resets near the grid keep the reset wake. With no reset ahead —
+// none reported, or one already past (a lapsed window the anchor decision
+// declined to re-touch) — the manual schedule (or the auto 4h re-check)
+// applies. A past reset is never a wake target: sleeping 0 to it just
+// hot-loops the boundary.
 func nextWake(quota *glm.QuotaStatus) (time.Time, bool, error) {
 	sched := config.Current.Schedule
-	if !quota.ResetTime.IsZero() {
+	if !quota.ResetTime.IsZero() && quota.ResetTime.After(time.Now()) {
 		if sched.Manual() {
 			s, err := nextScheduledTime(sched)
 			if err != nil {
