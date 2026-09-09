@@ -251,7 +251,7 @@ const (
 	// schedule point is taken (wake at the reset, anchor there); resets
 	// farther from the schedule grid are skipped — the next schedule point
 	// anchors instead.
-	scheduleNearThreshold = 90 * time.Minute
+	scheduleNearThreshold = 2 * time.Hour
 	// Reset wakes fire this many seconds early so the quota query lands
 	// just before the boundary and the decision runs on fresh data.
 	resetQueryLead = 5 * time.Second
