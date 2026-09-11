@@ -12,10 +12,10 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/xihale/glm/pkg/config"
-	"github.com/xihale/glm/pkg/ui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/xihale/glm/pkg/config"
+	"github.com/xihale/glm/pkg/ui"
 )
 
 var installCmd = &cobra.Command{
@@ -66,7 +66,7 @@ Times accept H, H:M, or H:M:S format.`,
 			// No mode specified: reuse an existing valid schedule from the
 			// config file (default path or --config) instead of forcing the
 			// user to reconfigure.
-			if !config.Current.Schedule.IsEmpty() {
+			if scopeHasSchedule() {
 				return installExisting(scope)
 			}
 			return fmt.Errorf("manual mode requires <timezone> <time> [time...], or use --auto")
@@ -91,14 +91,27 @@ func applyInstall(scope installScope) (string, error) {
 	if err := systemctl(scope, "daemon-reload"); err != nil {
 		return "", err
 	}
-	if err := systemctl(scope, "enable", "--now", serviceUnit); err != nil {
+	if err := systemctl(scope, "enable", "--now", serviceUnitName()); err != nil {
 		return "", err
 	}
 	return unitPath, nil
 }
 
+// scopeHasSchedule reports whether the active provider has any usable
+// activation policy: its resolved schedule, or (agy) per-pool schedules.
+func scopeHasSchedule() bool {
+	if config.EffectiveProvider() == "agy" {
+		for _, pc := range config.Current.AGY.Pools {
+			if !pc.Schedule.IsEmpty() {
+				return true
+			}
+		}
+	}
+	return !config.Current.ScheduleFor(config.EffectiveProvider()).IsEmpty()
+}
+
 func installExisting(scope installScope) error {
-	sched := config.Current.Schedule
+	sched := config.Current.ScheduleFor(config.EffectiveProvider())
 
 	unitPath, err := applyInstall(scope)
 	if err != nil {
@@ -122,12 +135,21 @@ func installExisting(scope installScope) error {
 	return nil
 }
 
-func installAuto(scope installScope) error {
-	config.Current.Schedule = config.ScheduleConfig{
-		Auto: true,
+// storeSchedule persists the schedule under the active provider's key:
+// "schedule" for glm, "agy.schedule" for agy — one file, per-provider policy.
+func storeSchedule(sched config.ScheduleConfig) error {
+	if config.EffectiveProvider() == "agy" {
+		config.Current.AGY.Schedule = sched
+		viper.Set("agy.schedule", sched)
+	} else {
+		config.Current.Schedule = sched
+		viper.Set("schedule", sched)
 	}
-	viper.Set("schedule", config.Current.Schedule)
-	if err := config.SaveConfig(); err != nil {
+	return config.SaveConfig()
+}
+
+func installAuto(scope installScope) error {
+	if err := storeSchedule(config.ScheduleConfig{Auto: true}); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
@@ -159,12 +181,11 @@ func installManual(scope installScope, zoneSpec string, timeStrs []string) error
 	}
 	sort.Strings(times)
 
-	config.Current.Schedule = config.ScheduleConfig{
+	sched := config.ScheduleConfig{
 		Timezone: zoneSpec,
 		Times:    times,
 	}
-	viper.Set("schedule", config.Current.Schedule)
-	if err := config.SaveConfig(); err != nil {
+	if err := storeSchedule(sched); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
@@ -183,7 +204,15 @@ func installManual(scope installScope, zoneSpec string, timeStrs []string) error
 
 // --- systemd ---
 
-const serviceUnit = "glm.service"
+// serviceUnitName returns the systemd unit for the active provider scope.
+// Each provider gets its own unit so both daemons can run side by side:
+// glm -> glm.service, agy -> glm-agy.service.
+func serviceUnitName() string {
+	if config.EffectiveProvider() == "agy" {
+		return "glm-agy.service"
+	}
+	return "glm.service"
+}
 
 // installScope selects which systemd bus a command targets.
 type installScope string
@@ -255,10 +284,12 @@ func reinitUnderSudo() error {
 }
 
 type unitData struct {
-	ExecPath   string
-	ConfigPath string
-	UserLine   string // "User=foo" or "" (omit directive)
-	WantedBy   string
+	ExecPath    string
+	ConfigPath  string
+	Description string
+	ProviderArg string // "--provider agy" or "" (provider selects the section)
+	UserLine    string // "User=foo" or "" (omit directive)
+	WantedBy    string
 }
 
 func servicePaths() (execPath, configPath string, err error) {
@@ -284,7 +315,7 @@ func systemdUnitDir(scope installScope) string {
 }
 
 func systemUnitPath(scope installScope) string {
-	return filepath.Join(systemdUnitDir(scope), serviceUnit)
+	return filepath.Join(systemdUnitDir(scope), serviceUnitName())
 }
 
 func installServiceUnit(scope installScope, execPath, configPath string) (string, error) {
@@ -293,10 +324,13 @@ func installServiceUnit(scope installScope, execPath, configPath string) (string
 		return "", err
 	}
 
+	unit := serviceUnitName()
 	data := unitData{
-		ExecPath:   execPath,
-		ConfigPath: configPath,
-		WantedBy:   "default.target",
+		ExecPath:    execPath,
+		ConfigPath:  configPath,
+		Description: "Quota Activation Daemon (" + config.EffectiveProvider() + ")",
+		ProviderArg: providerArg(),
+		WantedBy:    "default.target",
 	}
 	if scope == scopeSystem {
 		data.WantedBy = "multi-user.target"
@@ -310,14 +344,14 @@ func installServiceUnit(scope installScope, execPath, configPath string) (string
 		}
 	}
 
-	path := filepath.Join(dir, serviceUnit)
+	path := filepath.Join(dir, unit)
 	f, err := os.Create(path)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
 
-	t, err := template.New(serviceUnit).Parse(serviceTmpl)
+	t, err := template.New(unit).Parse(serviceTmpl)
 	if err != nil {
 		return "", err
 	}
@@ -411,7 +445,7 @@ func parseUTCOffset(spec string) (int, error) {
 		}
 	}
 
-	return sign*((hours*3600)+(minutes*60)), nil
+	return sign * ((hours * 3600) + (minutes * 60)), nil
 }
 
 func fmtOffsetLabel(offset int) string {
@@ -481,14 +515,14 @@ func parseRange(s string, min, max int) (int, error) {
 }
 
 const serviceTmpl = `[Unit]
-Description=GLM Activation Daemon
+Description={{.Description}}
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 {{if .UserLine}}{{.UserLine}}
-{{end}}ExecStart={{.ExecPath}} active --service --config {{.ConfigPath}}
+{{end}}ExecStart={{.ExecPath}} active --service{{if .ProviderArg}} {{.ProviderArg}}{{end}} --config {{.ConfigPath}}
 Restart=on-failure
 RestartSec=30
 StandardOutput=journal

@@ -12,7 +12,7 @@ var DebugMode bool
 
 func Infof(format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "%s %s %s\n", 
+	fmt.Fprintf(os.Stderr, "%s %s %s\n",
 		ui.Style(time.Now().Format("15:04:05"), ui.Gray),
 		ui.Style("INFO", ui.Blue, ui.Bold),
 		msg)
@@ -20,7 +20,7 @@ func Infof(format string, a ...interface{}) {
 
 func Errorf(format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "%s %s %s\n", 
+	fmt.Fprintf(os.Stderr, "%s %s %s\n",
 		ui.Style(time.Now().Format("15:04:05"), ui.Gray),
 		ui.Style("ERROR", ui.Red, ui.Bold),
 		msg)
@@ -31,7 +31,7 @@ func Debugf(format string, a ...interface{}) {
 		return
 	}
 	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "%s %s %s\n", 
+	fmt.Fprintf(os.Stderr, "%s %s %s\n",
 		ui.Style(time.Now().Format("15:04:05"), ui.Gray),
 		ui.Style("DEBUG", ui.Magenta, ui.Bold),
 		msg)

@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/xihale/glm/pkg/ui"
 	"github.com/spf13/cobra"
+	"github.com/xihale/glm/pkg/ui"
 )
 
 var reloadCmd = &cobra.Command{
@@ -21,10 +21,10 @@ For ad-hoc runs, send SIGHUP manually: kill -HUP <pid>.`,
 		if err != nil {
 			return err
 		}
-		if err := systemctl(scope, "kill", "--signal=SIGHUP", serviceUnit); err != nil {
-			return fmt.Errorf("reload %s (%s): %w\n(Is the service installed and running? Run 'glm install' first.)", serviceUnit, scope, err)
+		if err := systemctl(scope, "kill", "--signal=SIGHUP", serviceUnitName()); err != nil {
+			return fmt.Errorf("reload %s (%s): %w\n(Is the service installed and running? Run 'glm install' first.)", serviceUnitName(), scope, err)
 		}
-		ui.Success(fmt.Sprintf("Sent reload signal to %s (%s)", serviceUnit, scope))
+		ui.Success(fmt.Sprintf("Sent reload signal to %s (%s)", serviceUnitName(), scope))
 		return nil
 	},
 }

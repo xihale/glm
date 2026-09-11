@@ -1,19 +1,25 @@
 package httputil
 
 import (
-	"github.com/xihale/glm/pkg/config"
 	"net/http"
 	"net/url"
 	"time"
 )
 
+// NewHttpClient builds a client honoring the shared top-level proxy.
 func NewHttpClient(timeout time.Duration) *http.Client {
+	return NewHttpClientWithProxy(timeout, "")
+}
+
+// NewHttpClientWithProxy builds a client with an explicit proxy URL
+// (http:// or socks5://; empty = direct). Callers holding a config snapshot
+// pass their per-provider proxy here.
+func NewHttpClientWithProxy(timeout time.Duration, proxyURL string) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 
-	if config.Current.Proxy != "" {
-		proxyURL, err := url.Parse(config.Current.Proxy)
-		if err == nil {
-			transport.Proxy = http.ProxyURL(proxyURL)
+	if proxyURL != "" {
+		if u, err := url.Parse(proxyURL); err == nil {
+			transport.Proxy = http.ProxyURL(u)
 		}
 	}
 

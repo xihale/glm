@@ -22,3 +22,6 @@ main
 # Config
 config.yaml
 *.log
+
+# Agent session artifacts
+.zcode/

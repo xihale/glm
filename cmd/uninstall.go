@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/xihale/glm/pkg/ui"
 	"github.com/spf13/cobra"
+	"github.com/xihale/glm/pkg/ui"
 )
 
 var uninstallCmd = &cobra.Command{
@@ -28,10 +28,10 @@ var uninstallCmd = &cobra.Command{
 		}
 
 		dir := systemdUnitDir(scope)
-		serviceFile := filepath.Join(dir, serviceUnit)
+		serviceFile := filepath.Join(dir, serviceUnitName())
 
 		// Stop service
-		if err := systemctl(scope, "disable", "--now", serviceUnit); err != nil {
+		if err := systemctl(scope, "disable", "--now", serviceUnitName()); err != nil {
 			if !strings.Contains(err.Error(), "not loaded") {
 				ui.Warn(fmt.Sprintf("Stop service: %v", err))
 			}

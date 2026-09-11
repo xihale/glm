@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,26 +18,45 @@ import (
 
 var activeCmd = &cobra.Command{
 	Use:   "active",
-	Short: "Send heartbeat to activate GLM quota",
-	Long: `Send heartbeat to activate GLM quota.
+	Short: "Send heartbeat to activate quota (glm or agy provider)",
+	Long: `Send a minimal request to activate the quota window.
 
-Verifies activation by polling quota after heartbeat.
-Use --force to activate even when quota is active.
+Works with both providers selected in config ('glm' or 'agy'):
+  - glm: GLM coding plan 5h tokens window (heartbeat to chat API)
+  - agy: Antigravity/Gemini 5h pool (minimal warmup generateContent)
+
+Verifies activation by polling quota after the request.
+Use --force to activate even when the window is live.
+agy accepts --pool gemini|3p to activate a specific pool (default from config).
 With --service, runs as a daemon: activate, sleep until next run, repeat.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if config.Current.APIKey == "" {
-			return fmt.Errorf("no API key configured. Run 'glm login' first")
-		}
-
 		debug, _ := cmd.Flags().GetBool("debug")
 		force, _ := cmd.Flags().GetBool("force")
 		serviceMode, _ := cmd.Flags().GetBool("service")
+		pool, _ := cmd.Flags().GetString("pool")
 
 		if serviceMode {
 			return runDaemon(debug, force)
 		}
 
-		client := glm.NewClient()
+		var client providerClient
+		var err error
+		if pool != "" {
+			if config.EffectiveProvider() != "agy" {
+				return fmt.Errorf("--pool only applies to --provider agy")
+			}
+			switch pool {
+			case "gemini", "3p":
+			default:
+				return fmt.Errorf("unknown pool %q (want gemini or 3p)", pool)
+			}
+			client, err = newProviderClientWithPool(pool)
+		} else {
+			client, err = newProviderClient()
+		}
+		if err != nil {
+			return err
+		}
 		client.SetDebug(debug)
 
 		// One-shot mode
@@ -50,28 +70,88 @@ With --service, runs as a daemon: activate, sleep until next run, repeat.`,
 	},
 }
 
+// runDaemon starts one anchor loop per configured pool. glm runs a single
+// unnamed loop (its behavior is unchanged); agy runs one loop per pool from
+// agy.pools, or a single loop for the legacy `pool` setting. Each loop owns
+// its own schedule, state machine, and signal handling.
 func runDaemon(debug, force bool) error {
+	cfg := config.Snapshot()
+	pools := daemonPools(cfg)
+
+	if len(pools) == 1 {
+		return runDaemonPool(pools[0], "", debug, force)
+	}
+
+	var wg sync.WaitGroup
+	for _, pool := range pools {
+		wg.Add(1)
+		go func(pool string) {
+			defer wg.Done()
+			runDaemonPool(pool, "["+pool+"] ", debug, force)
+		}(pool)
+	}
+	log.Infof("Daemon started for pools: %v", pools)
+	wg.Wait()
+	return nil
+}
+
+func runDaemonPool(pool, prefix string, debug, force bool) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	reloadCh := make(chan os.Signal, 1)
 	signal.Notify(reloadCh, syscall.SIGHUP)
 
-	log.Infof("Daemon started (auto=%v manual=%v)",
-		config.Current.Schedule.Auto, config.Current.Schedule.Manual())
+	// plog prefixes messages with the pool name when multiple loops run, so
+	// interleaved journal lines stay attributable.
+	plog := func(format string, a ...interface{}) {
+		log.Infof(prefix+format, a...)
+	}
+	perr := func(format string, a ...interface{}) {
+		log.Errorf(prefix+format, a...)
+	}
+
+	if err := config.Reload(); err != nil {
+		perr("Config reload failed, keeping current: %v", err)
+	}
+	cfg := config.Snapshot()
+	sched := scheduleForScope(cfg, pool)
+	if weeklyOnlyForScope(cfg, pool) {
+		plog("Daemon started (weekly keepalive, no 5h anchoring)")
+	} else {
+		plog("Daemon started (auto=%v manual=%v)", sched.Auto, sched.Manual())
+	}
 
 	exhausted := false
 	// True when the current sleep targets a reported reset: on wake, a few
 	// seconds of leftover wait is a normal landing, not drift to re-decide.
 	resetTarget := false
+	// Set when the current sleep targets the weekly bucket's reset (opt-in
+	// passive refresh): on the next wake a warmup fires right at the reset.
+	weeklyTarget := false
+	var weeklyTargetAt time.Time
 	// Instant of the daemon's most recent heartbeat. A reported window no
 	// newer than this was not moved by our own anchor — see the stale check.
 	var lastAnchor time.Time
 	for {
 		if err := config.Reload(); err != nil {
-			log.Errorf("Config reload failed, keeping current: %v", err)
+			perr("Config reload failed, keeping current: %v", err)
 		}
-		client := glm.NewClient()
+		cfg := config.Snapshot()
+		weeklyOn := weeklyForScope(cfg, pool)
+		wOnly := weeklyOnlyForScope(cfg, pool)
+		client, err := newProviderClientFor(cfg, pool)
+		if err != nil {
+			perr("Init provider client: %v", err)
+			switch sleepOr(sigCh, reloadCh, time.Minute) {
+			case sleepSignal:
+				plog("Received signal, shutting down")
+				return nil
+			case sleepReload:
+				plog("Received SIGHUP, reloading config")
+			}
+			continue
+		}
 		client.SetDebug(debug)
 
 		// Query first, decide second: the heartbeat only fires once this
@@ -80,13 +160,70 @@ func runDaemon(debug, force bool) error {
 		// its reset when the API's timing drifted.
 		quota, err := client.GetQuota()
 		if err != nil {
-			log.Errorf("Get quota failed: %v", err)
+			perr("Get quota failed: %v", err)
 			switch sleepOr(sigCh, reloadCh, time.Minute) {
 			case sleepSignal:
-				log.Infof("Received signal, shutting down")
+				plog("Received signal, shutting down")
 				return nil
 			case sleepReload:
-				log.Infof("Received SIGHUP, reloading config")
+				plog("Received SIGHUP, reloading config")
+			}
+			continue
+		}
+
+		// Weekly-only pool: the 5h window stays passive — the daemon never
+		// anchors it on a schedule. The loop only keeps the weekly bucket
+		// rolling: a window nobody ever requests stays "not started" (and a
+		// lapsed one stays lapsed), so fire a warmup at startup while the
+		// bucket is fresh, then again whenever a reported reset has passed.
+		// Between fires, sleep to the reported reset.
+		if wOnly {
+			wr, wrOK := weeklyResetOf(client)
+			if !wrOK || wr.IsZero() {
+				plog("Weekly reset not reported — re-checking in %v", weeklyOnlyRecheck)
+				switch sleepOr(sigCh, reloadCh, weeklyOnlyRecheck) {
+				case sleepSignal:
+					plog("Received signal, shutting down")
+					return nil
+				case sleepReload:
+					plog("Received SIGHUP, reloading config")
+				}
+				continue
+			}
+			fresh := false
+			if f, ok := weeklyRemainingOf(client); ok {
+				// 0.9999 rather than 1.0: float jitter around a full bucket
+				// must read as fresh, while our own warmup (~0.02%) must not.
+				fresh = f >= 0.9999
+			}
+			resetPassed := !wr.After(time.Now())
+			if fresh && (lastAnchor.IsZero() || resetPassed) {
+				if hc, ok := client.(interface{ SendHeartbeat() error }); ok {
+					plog("Weekly keep-alive — firing warmup (bucket fresh, reset %s)",
+						wr.Local().Format("2006-01-02 15:04:05"))
+					if err := hc.SendHeartbeat(); err != nil {
+						perr("Weekly keep-alive failed: %v", err)
+					} else {
+						lastAnchor = time.Now()
+					}
+				}
+			}
+			target := wr
+			if !target.After(time.Now()) {
+				target = time.Now().Add(weeklyOnlyRecheck)
+			}
+			wait := time.Until(target) - resetQueryLead
+			if wait < 0 {
+				wait = 0
+			}
+			plog("Next weekly check at %s (sleeping %s)",
+				target.Local().Format("2006-01-02 15:04:05"), glm.FormatTimeUntil(target))
+			switch sleepOr(sigCh, reloadCh, wait) {
+			case sleepSignal:
+				plog("Received signal, shutting down")
+				return nil
+			case sleepReload:
+				plog("Received SIGHUP, reloading config")
 			}
 			continue
 		}
@@ -102,6 +239,7 @@ func runDaemon(debug, force bool) error {
 		stale := quota.Remaining > 0 &&
 			(quota.ResetTime.IsZero() || !quota.ResetTime.After(time.Now())) &&
 			quota.ResetTime.After(lastAnchor)
+		fired := false
 		if quota.Remaining >= 100 || stale || force {
 			if stale {
 				lapse := "no reset reported"
@@ -109,21 +247,22 @@ func runDaemon(debug, force bool) error {
 					lapse = fmt.Sprintf("reset %s passed",
 						quota.ResetTime.Local().Format("15:04:05"))
 				}
-				log.Infof("Window lapsed (%s, %d%% reported) — re-anchoring", lapse, quota.Remaining)
+				plog("Window lapsed (%s, %d%% reported) — re-anchoring", lapse, quota.Remaining)
 			}
-			log.Infof("Activating...")
+			plog("Activating...")
 			quota, err = client.Activate(force || stale, false)
 			if err != nil {
-				log.Errorf("Activation failed: %v", err)
+				perr("Activation failed: %v", err)
 				switch sleepOr(sigCh, reloadCh, time.Minute) {
 				case sleepSignal:
-					log.Infof("Received signal, shutting down")
+					plog("Received signal, shutting down")
 					return nil
 				case sleepReload:
-					log.Infof("Received SIGHUP, reloading config")
+					plog("Received SIGHUP, reloading config")
 				}
 				continue
 			}
+			fired = true
 			lastAnchor = time.Now()
 		}
 
@@ -137,13 +276,13 @@ func runDaemon(debug, force bool) error {
 		// the reset; without a reset time it polls.
 		if quota.Remaining <= 0 {
 			untilReset := time.Until(quota.ResetTime)
-			ref, schedPoint, near := resetNearSchedule(quota.ResetTime)
+			ref, schedPoint, near := resetNearSchedule(quota.ResetTime, sched)
 			var wait time.Duration
 			switch {
 			case untilReset <= 0:
 				if !exhausted {
 					exhausted = true
-					log.Infof("Quota exhausted (no reset time reported) — polling every %s",
+					plog("Quota exhausted (no reset time reported) — polling every %s",
 						exhaustedPollInterval)
 				}
 				wait = exhaustedPollInterval
@@ -153,7 +292,7 @@ func runDaemon(debug, force bool) error {
 				// only seconds are left — hold for it, don't re-decide.
 				if !exhausted {
 					exhausted = true
-					log.Infof("Quota exhausted — reset landing in %s, holding",
+					plog("Quota exhausted — reset landing in %s, holding",
 						untilReset.Round(time.Second))
 				}
 				wait = untilReset + time.Second
@@ -161,7 +300,7 @@ func runDaemon(debug, force bool) error {
 			case near:
 				if !exhausted {
 					exhausted = true
-					log.Infof("Quota exhausted — reset at %s is within %v after schedule %s — taking it",
+					plog("Quota exhausted — reset at %s is within %v after schedule %s — taking it",
 						quota.ResetTime.Local().Format("15:04:05"),
 						scheduleNearThreshold,
 						ref.Local().Format("15:04:05"))
@@ -179,7 +318,7 @@ func runDaemon(debug, force bool) error {
 					if quota.ResetTime.Before(ref) {
 						rel = "before"
 					}
-					log.Infof("Quota exhausted — reset at %s is %s schedule %s, sleeping to the schedule instead",
+					plog("Quota exhausted — reset at %s is %s schedule %s, sleeping to the schedule instead",
 						quota.ResetTime.Local().Format("15:04:05"),
 						rel,
 						ref.Local().Format("15:04:05"))
@@ -190,7 +329,7 @@ func runDaemon(debug, force bool) error {
 			default:
 				if !exhausted {
 					exhausted = true
-					log.Infof("Quota exhausted — waiting for reset at %s (%s)",
+					plog("Quota exhausted — waiting for reset at %s (%s)",
 						quota.ResetTime.Local().Format("2006-01-02 15:04:05"),
 						glm.FormatTimeUntil(quota.ResetTime))
 				}
@@ -200,24 +339,56 @@ func runDaemon(debug, force bool) error {
 
 			switch sleepOr(sigCh, reloadCh, wait) {
 			case sleepSignal:
-				log.Infof("Received signal, shutting down")
+				plog("Received signal, shutting down")
 				return nil
 			case sleepReload:
-				log.Infof("Received SIGHUP, reloading config")
+				plog("Received SIGHUP, reloading config")
 			}
 			continue
 		}
 		if exhausted {
-			log.Infof("Quota available again")
+			plog("Quota available again")
 			exhausted = false
 		}
 		resetTarget = false
 
+		// Weekly passive refresh (opt-in): if this wake landed at/past the
+		// weekly reset we targeted, fire a warmup now — the weekly bucket
+		// refills passively, the request just marks the fresh state and costs
+		// ~0.02% of it. It also anchors the 5h window when that one is fresh,
+		// which is why `fired` from the activate block above counts.
+		if weeklyOn && weeklyTarget && !time.Now().Before(weeklyTargetAt) && !fired {
+			if hc, ok := client.(interface{ SendHeartbeat() error }); ok {
+				plog("Weekly reset reached — passive refresh")
+				if err := hc.SendHeartbeat(); err != nil {
+					perr("Weekly refresh failed: %v", err)
+				} else {
+					fired = true
+					lastAnchor = time.Now()
+				}
+			}
+		}
+		weeklyTarget = false
+
 		// Calculate next run
-		next, atReset, err := nextWake(quota)
+		next, atReset, err := nextWake(quota, sched)
 		if err != nil {
-			log.Errorf("Calculate next run: %v", err)
+			perr("Calculate next run: %v", err)
 			return err
+		}
+
+		// Weekly passive refresh steals the wake when the weekly reset lands
+		// before the regular 5h/schedule target: wake at the reset, fire the
+		// warmup, then fall back to the regular decision next loop.
+		weeklyTarget = false
+		if weeklyOn {
+			if wr, ok := weeklyResetOf(client); ok {
+				next, weeklyTarget = maybeWeeklyWake(next, wr, time.Now())
+				if weeklyTarget {
+					weeklyTargetAt = next
+					atReset = false
+				}
+			}
 		}
 
 		wait := time.Until(next)
@@ -237,22 +408,58 @@ func runDaemon(debug, force bool) error {
 		if wait < 0 {
 			wait = 0
 		}
-		log.Infof("Next activation at %s (sleeping %s)",
+
+		plog("Next activation at %s (sleeping %s)",
 			next.Local().Format("2006-01-02 15:04:05"), glm.FormatTimeUntil(next))
 
 		switch sleepOr(sigCh, reloadCh, wait) {
 		case sleepSignal:
-			log.Infof("Received signal, shutting down")
+			plog("Received signal, shutting down")
 			return nil
 		case sleepReload:
-			log.Infof("Received SIGHUP, reloading config")
+			plog("Received SIGHUP, reloading config")
 		}
 	}
+}
+
+// maybeWeeklyWake moves the wake target to the weekly reset when that lands
+// before it and is still ahead; the bool reports the steal.
+func maybeWeeklyWake(next, weeklyReset, now time.Time) (time.Time, bool) {
+	if !weeklyReset.IsZero() && weeklyReset.After(now) && weeklyReset.Before(next) {
+		return weeklyReset, true
+	}
+	return next, false
+}
+
+// weeklyResetOf fetches the pool's weekly-bucket reset via the optional agy
+// interface (glm has no weekly concept and reports zero, false).
+func weeklyResetOf(client providerClient) (time.Time, bool) {
+	if wr, ok := client.(interface {
+		WeeklyReset() (time.Time, bool)
+	}); ok {
+		return wr.WeeklyReset()
+	}
+	return time.Time{}, false
+}
+
+// weeklyRemainingOf fetches the pool's weekly-bucket remaining fraction
+// (0-1) via the optional agy interface (glm reports zero, false).
+func weeklyRemainingOf(client providerClient) (float64, bool) {
+	if hc, ok := client.(interface {
+		WeeklyRemaining() (float64, bool)
+	}); ok {
+		return hc.WeeklyRemaining()
+	}
+	return 0, false
 }
 
 const (
 	exhaustedPollInterval = 10 * time.Second
 	minDaemonSleep        = 10 * time.Second
+	// Weekly-only pools re-check on this cadence when no future reset is
+	// reported (e.g. right after one passed without the bucket refilling
+	// fully); the next query normally yields the next reset instead.
+	weeklyOnlyRecheck = time.Hour
 	// Manual-schedule rule: a reported reset up to this much AFTER the
 	// nearest schedule point is taken (wake at the reset, anchor there). A
 	// reset before the point is never taken early — the daemon waits for the
@@ -307,8 +514,7 @@ func sleepOr(sigCh, reloadCh chan os.Signal, d time.Duration) sleepOutcome {
 // declined to re-touch) — the manual schedule (or the auto 4h re-check)
 // applies. A past reset is never a wake target: sleeping 0 to it just
 // hot-loops the boundary.
-func nextWake(quota *glm.QuotaStatus) (time.Time, bool, error) {
-	sched := config.Current.Schedule
+func nextWake(quota *glm.QuotaStatus, sched config.ScheduleConfig) (time.Time, bool, error) {
 	if !quota.ResetTime.IsZero() && quota.ResetTime.After(time.Now()) {
 		if sched.Manual() {
 			s, err := nextScheduledTime(sched)
@@ -349,8 +555,7 @@ func absDuration(d time.Duration) time.Duration {
 // only when it falls after ref and within scheduleNearThreshold of it — a
 // reset before its grid point is never taken early. Without a manual
 // schedule both are zero and the daemon always wakes at the reset.
-func resetNearSchedule(reset time.Time) (ref, schedPoint time.Time, near bool) {
-	sched := config.Current.Schedule
+func resetNearSchedule(reset time.Time, sched config.ScheduleConfig) (ref, schedPoint time.Time, near bool) {
 	if !sched.Manual() {
 		return time.Time{}, time.Time{}, false
 	}
@@ -510,4 +715,5 @@ func init() {
 	activeCmd.Flags().BoolP("force", "f", false, "Force activation even if quota is active")
 	activeCmd.Flags().Bool("service", false, "Daemon mode: activate, sleep, repeat")
 	activeCmd.Flags().Bool("debug", false, "Show raw API responses")
+	activeCmd.Flags().String("pool", "", "agy pool to activate: gemini or 3p (default from config)")
 }

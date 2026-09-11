@@ -44,15 +44,21 @@ type Client struct {
 }
 
 func NewClient() *Client {
+	return NewClientFrom(config.Snapshot())
+}
+
+// NewClientFrom builds a client from a config snapshot (used by daemon loops
+// that hold a consistent copy).
+func NewClientFrom(cfg config.Config) *Client {
 	baseURL := DefaultBaseURL
-	if config.Current.BaseURL != "" {
-		baseURL = config.Current.BaseURL
+	if cfg.BaseURL != "" {
+		baseURL = cfg.BaseURL
 	}
 
 	return &Client{
-		APIKey:  config.Current.APIKey,
+		APIKey:  cfg.APIKey,
 		BaseURL: baseURL,
-		client:  httputil.NewHttpClient(10 * time.Second),
+		client:  httputil.NewHttpClientWithProxy(10*time.Second, cfg.Proxy),
 	}
 }
 
