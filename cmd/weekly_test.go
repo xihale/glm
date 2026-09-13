@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -106,5 +107,42 @@ func TestWeeklyOnlyForScope(t *testing.T) {
 	config.Provider = "glm"
 	if weeklyOnlyForScope(cfg, "3p") {
 		t.Fatal("glm must never run weekly-only")
+	}
+}
+
+func TestActivationFailureWait(t *testing.T) {
+	logf := func(string, ...interface{}) {}
+	manual := config.ScheduleConfig{
+		Timezone: "+8",
+		Times:    []string{"04:30:00", "09:30:00", "14:30:00", "19:30:00"},
+	}
+	geoErr := fmt.Errorf(`warmup failed: 400 ({"error":{"code":400,"message":"User location is not supported for the API use.","status":"FAILED_PRECONDITION"}})`)
+	transient := fmt.Errorf("warmup failed: 502 (bad gateway)")
+
+	// Permanent refusal + manual schedule: sleep to the next schedule point
+	// (strictly in the future, never a hot loop).
+	fails := 0
+	w := activationFailureWait(manual, &fails, geoErr, logf)
+	if fails != 1 || w <= time.Second || w > 24*time.Hour {
+		t.Fatalf("permanent refusal with manual schedule should wait for the next point, got fails=%d wait=%v", fails, w)
+	}
+
+	// Permanent refusal without a manual schedule: capped backoff, not 1 minute.
+	w = activationFailureWait(config.ScheduleConfig{}, &fails, geoErr, logf)
+	if w != activationBackoffCap {
+		t.Fatalf("permanent refusal without schedule should use the cap, got %v", w)
+	}
+
+	// Transient failures: exponential backoff 1m, 2m, ... capped.
+	fails = 0
+	for i, want := range []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute} {
+		w = activationFailureWait(manual, &fails, transient, logf)
+		if w != want {
+			t.Fatalf("transient failure %d: want %v, got %v", i+1, want, w)
+		}
+	}
+	fails = 40 // far past the shift overflow guard
+	if w = activationFailureWait(manual, &fails, transient, logf); w != activationBackoffCap {
+		t.Fatalf("transient failure overflow should clamp to the cap, got %v", w)
 	}
 }

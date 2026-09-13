@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -123,6 +124,9 @@ func runDaemonPool(pool, prefix string, debug, force bool) error {
 	}
 
 	exhausted := false
+	// Consecutive failed activations — drives the retry backoff (reset on
+	// success; a permanent refusal ignores it and waits for the schedule).
+	actFails := 0
 	// True when the current sleep targets a reported reset: on wake, a few
 	// seconds of leftover wait is a normal landing, not drift to re-decide.
 	resetTarget := false
@@ -253,7 +257,7 @@ func runDaemonPool(pool, prefix string, debug, force bool) error {
 			quota, err = client.Activate(force || stale, false)
 			if err != nil {
 				perr("Activation failed: %v", err)
-				switch sleepOr(sigCh, reloadCh, time.Minute) {
+				switch sleepOr(sigCh, reloadCh, activationFailureWait(sched, &actFails, err, plog)) {
 				case sleepSignal:
 					plog("Received signal, shutting down")
 					return nil
@@ -264,6 +268,7 @@ func runDaemonPool(pool, prefix string, debug, force bool) error {
 			}
 			fired = true
 			lastAnchor = time.Now()
+			actFails = 0
 		}
 
 		// Quota exhausted: a heartbeat cannot refresh it. The reported reset
@@ -453,6 +458,35 @@ func weeklyRemainingOf(client providerClient) (float64, bool) {
 	return 0, false
 }
 
+// activationFailureWait decides the sleep after a failed activation. A warmup
+// refusal that retrying cannot change — a geo-blocked egress (FAILED_PRECONDITION
+// "location is not supported") is the canonical case — must not be re-shot
+// every minute: that spams the API and floods the journal (a day of minute
+// retries evicted a day of journal history on a small VPS). Policy refusals
+// under a manual schedule sleep to the next schedule point (the egress or the
+// policy may change by then); every other failure backs off exponentially
+// from one minute, capped. Reset *fails to 0 on success.
+func activationFailureWait(sched config.ScheduleConfig, fails *int, err error, logf func(string, ...interface{})) time.Duration {
+	*fails++
+	msg := err.Error()
+	if strings.Contains(msg, "FAILED_PRECONDITION") ||
+		strings.Contains(msg, "location is not supported") {
+		if sched.Manual() {
+			if next, err := nextScheduledTime(sched); err == nil {
+				logf("Activation refusal looks permanent (%d in a row) — next attempt at the next schedule point %s",
+					*fails, next.Local().Format("2006-01-02 15:04:05"))
+				return time.Until(next)
+			}
+		}
+		return activationBackoffCap
+	}
+	wait := time.Minute << (*fails - 1)
+	if wait <= 0 || wait > activationBackoffCap {
+		return activationBackoffCap
+	}
+	return wait
+}
+
 const (
 	exhaustedPollInterval = 10 * time.Second
 	minDaemonSleep        = 10 * time.Second
@@ -460,6 +494,8 @@ const (
 	// reported (e.g. right after one passed without the bucket refilling
 	// fully); the next query normally yields the next reset instead.
 	weeklyOnlyRecheck = time.Hour
+	// Failed activations back off exponentially from one minute up to this.
+	activationBackoffCap = time.Hour
 	// Manual-schedule rule: a reported reset up to this much AFTER the
 	// nearest schedule point is taken (wake at the reset, anchor there). A
 	// reset before the point is never taken early — the daemon waits for the
