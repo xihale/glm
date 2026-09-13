@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -70,16 +71,48 @@ const (
 	PoolGemini = "gemini"
 	Pool3P     = "3p"
 
-	DefaultGeminiModel = "gemini-2.5-flash"
+	DefaultGeminiModel = "gemini-3.8-flash-high"
 	Default3PModel     = "claude-sonnet-4-6"
-
-	userAgent       = "antigravity/1.15.8 windows/amd64"
-	apiClientHeader = "google-cloud-sdk vscode_cloudshelleditor/0.1"
 
 	// Activate verification (mirrors pkg/glm).
 	VerifyRetries  = 5
 	VerifyInterval = 3 * time.Second
 	ResetThreshold = 10 * time.Minute
+)
+
+// The wire User-Agent is not cosmetic: Google gates generateContent billing
+// on a current official client version. A stale or unknown version gets
+// blanket 429 RESOURCE_EXHAUSTED on the prod endpoint and — worse — silent
+// HTTP 200s on the daily endpoint whose generations are real but never
+// touch the quota buckets (the quota timer reads a frozen "4h59m"). Format
+// and current version captured from agy CLI 1.1.24 wire traffic; when the
+// official CLI moves on, override via agy.user_agent in config.
+const (
+	uaClientVersion = "1.1.24"
+	uaChangelist    = "974782877"
+)
+
+// userAgent resolves the effective User-Agent: config override, else the
+// default built for this platform at first use.
+func (c *Client) userAgent() string {
+	if ua := strings.TrimSpace(c.cfg.UserAgent); ua != "" {
+		return ua
+	}
+	userAgentOnce.Do(func() {
+		os := map[string]string{"linux": "linux", "windows": "windows", "darwin": "macos"}[runtime.GOOS]
+		if os == "" {
+			os = runtime.GOOS
+		}
+		defaultUserAgent = fmt.Sprintf(
+			"antigravity/cli/%s (aidev_client; os_type=%s; arch=%s; cl=%s; auth_method=consumer)",
+			uaClientVersion, os, runtime.GOARCH, uaChangelist)
+	})
+	return defaultUserAgent
+}
+
+var (
+	userAgentOnce    sync.Once
+	defaultUserAgent string
 )
 
 // Bucket is one quota window as reported by retrieveUserQuotaSummary.
@@ -416,12 +449,11 @@ func (c *Client) ensureTokenWith(force bool) error {
 }
 
 func (c *Client) setHeaders(req *http.Request) {
+	// Header set mirrors the official client's wire traffic exactly: no
+	// X-Goog-Api-Client, no Client-Metadata — it sends none of those.
 	req.Header.Set("Authorization", "Bearer "+c.token.access)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("X-Goog-Api-Client", apiClientHeader)
-	req.Header.Set("Client-Metadata",
-		`{"ideType":"ANTIGRAVITY","pluginType":"GEMINI"}`)
+	req.Header.Set("User-Agent", c.userAgent())
 }
 
 func (c *Client) post(path string, body interface{}) ([]byte, int, error) {

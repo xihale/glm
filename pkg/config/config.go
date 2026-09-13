@@ -35,6 +35,11 @@ type AGYConfig struct {
 	Model        string `mapstructure:"model" json:"model" yaml:"model,omitempty"`
 	Endpoint     string `mapstructure:"endpoint" json:"endpoint" yaml:"endpoint,omitempty"`
 	TokenFile    string `mapstructure:"token_file" json:"token_file" yaml:"token_file,omitempty"`
+	// UserAgent overrides the warmup User-Agent. The API gates billing on a
+	// current official client version; when a new agy CLI ships and old
+	// clients start being refused, put the new client's UA string here
+	// without waiting for a glm release.
+	UserAgent string `mapstructure:"user_agent" json:"user_agent" yaml:"user_agent,omitempty"`
 	// Proxy routes only agy traffic (http:// or socks5://); falls back to
 	// the shared top-level proxy when empty. Keeps Google traffic on a
 	// proxy while glm stays direct.
