@@ -12,18 +12,27 @@ import (
 
 var completionCmd = &cobra.Command{
 	Use:   "completion [bash|zsh|fish|powershell]",
-	Short: "Install shell completion, or print the raw script",
-	Long: `Run without arguments to install completion for the current shell ($SHELL)
-so a new shell tab-completes glm out of the box.
+	Short: "Print the shell completion script",
+	Long: `Pass a shell name to print the raw completion script to stdout:
+  glm completion zsh > "${fpath[1]}/_glm"
 
-Pass a shell name to print the raw script to stdout instead:
-  glm completion zsh > "${fpath[1]}/_glm"`,
+Or let glm place the file for you (detects $SHELL):
+  glm completion install`,
 	Args:      cobra.MaximumNArgs(1),
 	ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 1 {
 			return printCompletionScript(args[0])
 		}
+		return cmd.Help()
+	},
+}
+
+var completionInstallCmd = &cobra.Command{
+	Use:   "install",
+	Short: "Install completion for the current shell ($SHELL)",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
 		shell := filepath.Base(os.Getenv("SHELL"))
 		switch shell {
 		case "bash", "zsh", "fish":
@@ -127,4 +136,5 @@ func installUserFile(rel string, shell string) (string, error) {
 
 func init() {
 	rootCmd.AddCommand(completionCmd)
+	completionCmd.AddCommand(completionInstallCmd)
 }

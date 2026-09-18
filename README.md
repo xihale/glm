@@ -56,12 +56,13 @@ glm install --auto        # install the scheduler as a systemd service
 glm install +8 09:00 20:00 # install with a manual schedule (timezone + times)
 glm reload                # reload config without restarting (SIGHUP)
 glm uninstall             # stop, disable, and remove the service
-glm completion            # install completion for the current shell ($SHELL)
+glm completion install    # install completion for the current shell ($SHELL)
 ```
 
-Shell completion: run `glm completion` once (for zsh use `sudo glm completion`
-so it lands in /usr/local/share/zsh/site-functions, which is in the stock
-fpath). `glm completion <shell>` prints the raw script instead.
+Shell completion: run `glm completion install` once (for zsh use
+`sudo glm completion install` so it lands in
+/usr/local/share/zsh/site-functions, which is in the stock fpath).
+`glm completion <shell>` prints the raw script instead.
 
 Every command takes the global `--provider agy` flag to operate on the agy
 scope instead:
