@@ -22,9 +22,10 @@ var activeCmd = &cobra.Command{
 	Short: "Send heartbeat to activate quota (glm or agy provider)",
 	Long: `Send a minimal request to activate the quota window.
 
-Works with both providers selected in config ('glm' or 'agy'):
-  - glm: GLM coding plan 5h tokens window (heartbeat to chat API)
-  - agy: Antigravity/Gemini 5h pool (minimal warmup generateContent)
+Works with all providers selected in config ('glm', 'agy', or 'commandcode'):
+  glm         - GLM coding plan 5h tokens window (heartbeat to chat API)
+  agy         - Antigravity/Gemini 5h pool (minimal warmup generateContent)
+  commandcode - Command Code 5h credits window (minimal warmup /responses)
 
 Verifies activation by polling quota after the request.
 Use --force to activate even when the window is live.

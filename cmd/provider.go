@@ -4,14 +4,15 @@ import (
 	"fmt"
 
 	"github.com/xihale/glm/pkg/agy"
+	"github.com/xihale/glm/pkg/cc"
 	"github.com/xihale/glm/pkg/config"
 	"github.com/xihale/glm/pkg/glm"
 )
 
-// providerClient is the quota backend contract shared by the glm and agy
-// providers. Both 5h-window backends report the same shape — Remaining 0-100
-// (100 = window fresh/unused) plus the window's ResetTime — so the daemon
-// state machine drives either one unchanged.
+// providerClient is the quota backend contract shared by the glm, agy, and
+// commandcode providers. All 5h-window backends report the same shape —
+// Remaining 0-100 (100 = window fresh/unused) plus the window's ResetTime —
+// so the daemon state machine drives any of them unchanged.
 type providerClient interface {
 	GetQuota() (*glm.QuotaStatus, error)
 	Activate(force bool, serviceMode bool) (*glm.QuotaStatus, error)
@@ -19,7 +20,8 @@ type providerClient interface {
 }
 
 // newProviderClientFor builds a client for the active provider from a config
-// snapshot. pool pins the agy pool ("gemini"/"3p"); it is ignored for glm.
+// snapshot. pool pins the agy pool ("gemini"/"3p"); it is ignored for the
+// other providers.
 func newProviderClientFor(cfg config.Config, pool string) (providerClient, error) {
 	switch config.EffectiveProvider() {
 	case "agy":
@@ -31,6 +33,11 @@ func newProviderClientFor(cfg config.Config, pool string) (providerClient, error
 			}
 		}
 		return c, nil
+	case "commandcode":
+		if cfg.CommandCode.APIKey == "" {
+			return nil, fmt.Errorf("no API key configured. Run 'glm login --provider commandcode' first")
+		}
+		return cc.NewClientFrom(cfg), nil
 	default:
 		if cfg.APIKey == "" {
 			return nil, fmt.Errorf("no API key configured. Run 'glm login' first")
@@ -44,7 +51,7 @@ func newProviderClient() (providerClient, error) {
 }
 
 // newProviderClientWithPool is newProviderClient with an explicit agy pool
-// override ("gemini"/"3p"); ignored for glm.
+// override ("gemini"/"3p"); ignored for the other providers.
 func newProviderClientWithPool(pool string) (providerClient, error) {
 	return newProviderClientFor(config.Snapshot(), pool)
 }
@@ -52,25 +59,28 @@ func newProviderClientWithPool(pool string) (providerClient, error) {
 // providerArg is the flag baked into a systemd unit so the daemon resolves
 // the same section the operator installed.
 func providerArg() string {
-	if config.EffectiveProvider() == "agy" {
+	switch config.EffectiveProvider() {
+	case "agy":
 		return "--provider agy"
+	case "commandcode":
+		return "--provider commandcode"
 	}
 	return ""
 }
 
 // daemonPools returns the anchor loops the daemon should run for the active
-// provider: one unnamed loop for glm, or one per configured agy pool
-// (pools map wins over the single `pool` setting).
+// provider: one unnamed loop for glm and commandcode, or one per configured
+// agy pool (pools map wins over the single `pool` setting).
 func daemonPools(cfg config.Config) []string {
-	if config.EffectiveProvider() != "agy" {
-		return []string{""}
+	if config.EffectiveProvider() == "agy" {
+		return cfg.AGY.AnchoredPools()
 	}
-	return cfg.AGY.AnchoredPools()
+	return []string{""}
 }
 
-// scheduleForScope resolves the schedule for a daemon loop: per-pool schedule
-// (when the pool is listed in agy.pools), then agy.schedule, then the shared
-// top-level schedule.
+// scheduleForScope resolves the schedule for a daemon loop: commandcode's own
+// schedule, then per-pool schedule (when the pool is listed in agy.pools),
+// then agy.schedule, then the shared top-level schedule.
 func scheduleForScope(cfg config.Config, pool string) config.ScheduleConfig {
 	if pool != "" {
 		if pc, ok := cfg.AGY.Pools[pool]; ok && !pc.Schedule.IsEmpty() {
@@ -79,6 +89,9 @@ func scheduleForScope(cfg config.Config, pool string) config.ScheduleConfig {
 		if !cfg.AGY.Schedule.IsEmpty() {
 			return cfg.AGY.Schedule
 		}
+	}
+	if config.EffectiveProvider() == "commandcode" && !cfg.CommandCode.Schedule.IsEmpty() {
+		return cfg.CommandCode.Schedule
 	}
 	return cfg.Schedule
 }

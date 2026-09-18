@@ -1,10 +1,10 @@
 # glm
 
-Quota monitor and activation tool for the GLM coding plan and Google
-Antigravity (Gemini), with systemd-based scheduling.
+Quota monitor and activation tool for the GLM coding plan, Google Antigravity
+(Gemini), and Command Code, with systemd-based scheduling.
 
-Both backends share the same 5-hour window model, so one daemon drives
-either: it wakes at the reported reset (or the configured schedule), fires a
+All backends share the same 5-hour window model, so one daemon drives any of
+them: it wakes at the reported reset (or the configured schedule), fires a
 minimal request to anchor a fresh window, and verifies via the quota API.
 
 ## Providers
@@ -20,6 +20,13 @@ opt into `weekly: true` to have the daemon wake at the weekly reset moment and
 fire a passive refresh anyway (costs ~0.02% of the weekly bucket; also anchors
 the 5h window if that one happens to be fresh at the time).
 
+`commandcode` — Command Code (commandcode.ai), the account's static CLI key.
+Quota comes from `/alpha/billing/credits` (a 5h credit bucket, cap 14 on the
+individual plan, plus a rolling weekly one); the warmup is a single minimal
+`/provider/v1/responses` request (~1.4e-5 credits on the contributor model).
+Models are plan-gated — the default warmup model answers on the individual
+plan, set `commandcode.model` to change it.
+
 Each pool can have its own schedule (and warmup model) via `agy.pools`; the
 daemon then runs one independent anchor loop per pool. A pool with
 `weekly_only: true` drops 5h anchoring entirely — its 5h window stays passive
@@ -27,13 +34,13 @@ daemon then runs one independent anchor loop per pool. A pool with
 weekly bucket rolling: one warmup at startup while the bucket is fresh (a
 window nobody ever requests stays "not started"), then again at each reported
 weekly reset. With a single config
-file, `--provider` picks the section (and systemd unit), so glm and agy
-daemons run side by side:
+file, `--provider` picks the section (and systemd unit), so all daemons run
+side by side:
 
-| | glm | agy |
-|---|---|---|
-| config section | top level (`api_key`, `schedule`) | `agy:` (refresh_token, `pools`/`schedule`) |
-| service | `glm.service` | `glm-agy.service` |
+| | glm | agy | commandcode |
+|---|---|---|---|
+| config section | top level (`api_key`, `schedule`) | `agy:` (refresh_token, `pools`/`schedule`) | `commandcode:` (`api_key`, `schedule`) |
+| service | `glm.service` | `glm-agy.service` | `glm-commandcode.service` |
 
 (An explicit `--config` path overrides the default file for all providers.)
 Access token and project id are cached in `~/.cache/glm/agy.json` (0600) so a
@@ -62,6 +69,17 @@ glm active --provider agy           # one-shot warmup of the 5h window
 glm install --provider agy --auto   # glm-agy.service, independent schedule
 glm reload --provider agy
 glm uninstall --provider agy
+```
+
+And for Command Code:
+
+```bash
+glm login --provider commandcode -k <key>   # the CLI's static Bearer token
+glm status --provider commandcode           # 5h + weekly windows, monthly credits
+glm active --provider commandcode           # one-shot warmup of the 5h window
+glm install --provider commandcode --auto   # glm-commandcode.service
+glm reload --provider commandcode
+glm uninstall --provider commandcode
 ```
 
 `glm install` installs a **system service** by default (boot-persistent, no
@@ -102,8 +120,8 @@ glm uninstall                   # auto-detects scope and removes it
 ## Config
 
 Single file: `~/.config/glm/config.yaml`, one section per provider, each with
-its own schedule (the agy daemon falls back to the shared top-level schedule
-when `agy.schedule` is absent).
+its own schedule (agy and commandcode fall back to the shared top-level
+schedule when their own `schedule:` is absent).
 
 ```yaml
 # --- glm provider (top level) ---
@@ -143,6 +161,15 @@ agy:
                               # passive; the loop only keeps the weekly bucket
                               # rolling (startup fire while fresh, then at
                               # each weekly reset). schedule: is unused here.
+
+# --- commandcode provider ---
+commandcode:
+  api_key: user_xxxxx         # the commandcode CLI's Bearer token
+  # model: meta/muse-spark-1.3-contributor   # warmup model (plan-gated!)
+  # cli_version: 1.56.0       # x-command-code-version header override
+  # proxy: http://...         # routes only commandcode traffic
+  schedule:
+    auto: true
 ```
 
 Every `pools:` entry must set at least one key — an empty `pool: {}` is

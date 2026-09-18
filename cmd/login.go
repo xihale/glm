@@ -28,10 +28,20 @@ agy provider (Google Antigravity / Gemini):
   glm login --provider agy --pool 3p  # anchor the Claude/GPT pool instead
 
 The agy refresh token never rotates: it is read once and stored in the
-config; access tokens are refreshed automatically afterwards.`,
+config; access tokens are refreshed automatically afterwards.
+
+commandcode provider (commandcode.ai):
+  glm login --provider commandcode            # interactive prompt for the key
+  glm login --provider commandcode -k <key>   # manual, e.g. on a server
+
+The commandcode key is the CLI's static Bearer token ("user_..."); it never
+rotates and drives both the warmup requests and the quota queries.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if config.EffectiveProvider() == "agy" {
+		switch config.EffectiveProvider() {
+		case "agy":
 			return loginAGY()
+		case "commandcode":
+			return loginCC()
 		}
 		return loginGLM()
 	},
@@ -125,6 +135,40 @@ func loginAGY() error {
 	return nil
 }
 
+func loginCC() error {
+	ccCfg := config.Current.CommandCode
+
+	if apiKeyFlag != "" {
+		ccCfg.APIKey = strings.TrimSpace(apiKeyFlag)
+	} else {
+		if ccCfg.APIKey != "" {
+			fmt.Printf("  Current: %s\n", ui.Dimmed(maskToken(ccCfg.APIKey)))
+			ui.Info("Key kept; run with -k to replace")
+		} else {
+			fmt.Printf("%s commandcode API key: ", ui.Style("?", ui.Cyan, ui.Bold))
+			byteKey, err := term.ReadPassword(int(syscall.Stdin))
+			if err != nil {
+				fmt.Println()
+				return fmt.Errorf("read API key: %w", err)
+			}
+			fmt.Println()
+			key := strings.TrimSpace(string(byteKey))
+			if key == "" {
+				return fmt.Errorf("API key cannot be empty")
+			}
+			ccCfg.APIKey = key
+		}
+	}
+
+	config.Current.CommandCode = ccCfg
+	if err := config.SaveConfig(); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+
+	ui.Success("commandcode API key saved")
+	return nil
+}
+
 func maskToken(t string) string {
 	if len(t) < 12 {
 		return strings.Repeat("*", len(t))
@@ -140,7 +184,7 @@ var (
 
 func init() {
 	rootCmd.AddCommand(loginCmd)
-	loginCmd.Flags().StringVarP(&apiKeyFlag, "key", "k", "", "GLM API key, or agy refresh token with --provider agy")
+	loginCmd.Flags().StringVarP(&apiKeyFlag, "key", "k", "", "GLM API key; agy refresh token or commandcode key with --provider")
 	loginCmd.Flags().StringVar(&poolFlag, "pool", "", "agy pool to anchor: gemini (default) or 3p")
 	loginCmd.Flags().StringVar(&projectFlag, "project", "", "agy cloudaicompanionProject id (auto-discovered by default)")
 }

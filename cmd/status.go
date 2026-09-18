@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/xihale/glm/pkg/agy"
+	"github.com/xihale/glm/pkg/cc"
 	"github.com/xihale/glm/pkg/config"
 	"github.com/xihale/glm/pkg/glm"
 	"github.com/xihale/glm/pkg/ui"
@@ -14,10 +15,13 @@ import (
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show quota status (glm or agy provider)",
+	Short: "Show quota status (glm, agy, or commandcode provider)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if config.EffectiveProvider() == "agy" {
+		switch config.EffectiveProvider() {
+		case "agy":
 			return statusAGY()
+		case "commandcode":
+			return statusCC()
 		}
 
 		if config.Current.APIKey == "" {
@@ -35,6 +39,61 @@ var statusCmd = &cobra.Command{
 		printQuotaStatus(quota)
 		return nil
 	},
+}
+
+// statusCC prints the raw rolling windows from one credits query — no
+// remapping, the same data the daemon decides on.
+func statusCC() error {
+	if config.Current.CommandCode.APIKey == "" {
+		return fmt.Errorf("no API key configured. Run 'glm login --provider commandcode' first")
+	}
+
+	creds, err := cc.NewClient().GetCredits()
+	if err != nil {
+		ui.Error(fmt.Sprintf("Failed to get quota: %v", err))
+		return err
+	}
+
+	fmt.Printf(" %s\n", ui.Style("Command Code", ui.Bold))
+	printCCWindow("5h", creds.Five)
+	printCCWindow("weekly", creds.Weekly)
+	fmt.Printf("     %-8s %.2f credits left\n", "monthly:", creds.Monthly)
+	fmt.Printf("\n%s\n", ui.Dimmed(
+		"'glm active --provider commandcode' anchors the 5h window (first request after its reset starts a new one)"))
+	return nil
+}
+
+func printCCWindow(label string, w cc.Window) {
+	if w.Cap <= 0 {
+		return
+	}
+	left := (1 - w.Used/w.Cap) * 100
+	if left < 0 {
+		left = 0
+	}
+	color := ui.Green
+	if left < 20 {
+		color = ui.Red
+	} else if left < 50 {
+		color = ui.Yellow
+	}
+	pctStr := ui.Style(fmt.Sprintf("%.1f%%", left), color, ui.Bold)
+
+	note := ""
+	if w.Used <= 0 {
+		note = ui.Dimmed(" (window not started)")
+	}
+	reset := ui.Dimmed("N/A")
+	if !w.ResetAt.IsZero() {
+		until := glm.FormatTimeUntil(w.ResetAt)
+		at := w.ResetAt.Local().Format("01-02 15:04:05")
+		if until == "Passed" {
+			reset = fmt.Sprintf("%s, reset %s", ui.Dimmed("passed"), at)
+		} else {
+			reset = fmt.Sprintf("%s, reset at %s", until, at)
+		}
+	}
+	fmt.Printf("     %-8s %s (%.2g/%.2g used, %s)%s\n", label+":", pctStr, w.Used, w.Cap, reset, note)
 }
 
 func statusAGY() error {

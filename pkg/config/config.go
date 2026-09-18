@@ -22,6 +22,30 @@ type Config struct {
 	// AGY provider section (Google Antigravity / Gemini) with its own
 	// credentials and schedule, so one config file drives both daemons.
 	AGY AGYConfig `mapstructure:"agy" json:"agy" yaml:"agy,omitempty"`
+	// CommandCode provider section (commandcode.ai) with its own key and
+	// schedule.
+	CommandCode CommandCodeConfig `mapstructure:"commandcode" json:"commandcode" yaml:"commandcode,omitempty"`
+}
+
+// CommandCodeConfig holds credentials and policy for the Command Code
+// (commandcode.ai) provider. Only APIKey is required; the rest have working
+// defaults.
+type CommandCodeConfig struct {
+	APIKey string `mapstructure:"api_key" json:"api_key" yaml:"api_key,omitempty"`
+	// Model overrides the warmup model (plan-gated: Pro-tier models answer
+	// MODEL_NOT_IN_PLAN on the individual plan).
+	Model string `mapstructure:"model" json:"model" yaml:"model,omitempty"`
+	// Endpoint overrides the API base URL (default api.commandcode.ai).
+	Endpoint string `mapstructure:"endpoint" json:"endpoint" yaml:"endpoint,omitempty"`
+	// CLIVersion overrides the x-command-code-version header; the official
+	// CLI's version moves on without a glm release being needed.
+	CLIVersion string `mapstructure:"cli_version" json:"cli_version" yaml:"cli_version,omitempty"`
+	// Proxy routes only commandcode traffic (http:// or socks5://); falls
+	// back to the shared top-level proxy when empty.
+	Proxy string `mapstructure:"proxy" json:"proxy" yaml:"proxy,omitempty"`
+	// Schedule is the commandcode daemon's own activation policy. When empty
+	// the shared top-level schedule applies.
+	Schedule ScheduleConfig `mapstructure:"schedule" json:"schedule" yaml:"schedule,omitempty"`
 }
 
 // AGYConfig holds credentials and policy for the Antigravity (agy) provider.
@@ -72,11 +96,18 @@ type AGYPoolConfig struct {
 }
 
 // ScheduleFor returns the activation policy governing the given provider.
-// agy uses its own section's schedule when configured, falling back to the
-// shared top-level schedule.
+// agy and commandcode use their own section's schedule when configured,
+// falling back to the shared top-level schedule.
 func (c Config) ScheduleFor(provider string) ScheduleConfig {
-	if provider == "agy" && !c.AGY.Schedule.IsEmpty() {
-		return c.AGY.Schedule
+	switch provider {
+	case "agy":
+		if !c.AGY.Schedule.IsEmpty() {
+			return c.AGY.Schedule
+		}
+	case "commandcode":
+		if !c.CommandCode.Schedule.IsEmpty() {
+			return c.CommandCode.Schedule
+		}
 	}
 	return c.Schedule
 }
@@ -134,8 +165,11 @@ var (
 
 // EffectiveProvider resolves the active provider from the --provider flag.
 func EffectiveProvider() string {
-	if strings.EqualFold(strings.TrimSpace(Provider), "agy") {
+	switch strings.ToLower(strings.TrimSpace(Provider)) {
+	case "agy":
 		return "agy"
+	case "commandcode", "cc":
+		return "commandcode"
 	}
 	return "glm"
 }

@@ -136,12 +136,17 @@ func installExisting(scope installScope) error {
 }
 
 // storeSchedule persists the schedule under the active provider's key:
-// "schedule" for glm, "agy.schedule" for agy — one file, per-provider policy.
+// "schedule" for glm, "agy.schedule" for agy, "commandcode.schedule" for
+// commandcode — one file, per-provider policy.
 func storeSchedule(sched config.ScheduleConfig) error {
-	if config.EffectiveProvider() == "agy" {
+	switch config.EffectiveProvider() {
+	case "agy":
 		config.Current.AGY.Schedule = sched
 		viper.Set("agy.schedule", sched)
-	} else {
+	case "commandcode":
+		config.Current.CommandCode.Schedule = sched
+		viper.Set("commandcode.schedule", sched)
+	default:
 		config.Current.Schedule = sched
 		viper.Set("schedule", sched)
 	}
@@ -205,11 +210,15 @@ func installManual(scope installScope, zoneSpec string, timeStrs []string) error
 // --- systemd ---
 
 // serviceUnitName returns the systemd unit for the active provider scope.
-// Each provider gets its own unit so both daemons can run side by side:
-// glm -> glm.service, agy -> glm-agy.service.
+// Each provider gets its own unit so all daemons can run side by side:
+// glm -> glm.service, agy -> glm-agy.service, commandcode ->
+// glm-commandcode.service.
 func serviceUnitName() string {
-	if config.EffectiveProvider() == "agy" {
+	switch config.EffectiveProvider() {
+	case "agy":
 		return "glm-agy.service"
+	case "commandcode":
+		return "glm-commandcode.service"
 	}
 	return "glm.service"
 }
