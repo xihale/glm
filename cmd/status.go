@@ -57,7 +57,8 @@ func statusCC() error {
 	fmt.Printf(" %s\n", ui.Style("Command Code", ui.Bold))
 	printCCWindow("5h", creds.Five)
 	printCCWindow("weekly", creds.Weekly)
-	fmt.Printf("     %-8s %.2f credits left\n", "monthly:", creds.Monthly)
+	fmt.Printf("     %-8s %.2f credits left (monthly plan balance — requests draw it down; the caps above are rate windows over the same credits)\n",
+		"balance:", creds.Monthly)
 	fmt.Printf("\n%s\n", ui.Dimmed(
 		"'glm active --provider commandcode' anchors the 5h window (first request after its reset starts a new one)"))
 	return nil
