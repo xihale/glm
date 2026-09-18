@@ -54,11 +54,15 @@ func statusCC() error {
 		return err
 	}
 
+	cap := config.Current.CommandCode.MonthlyCap
+	if cap <= 0 {
+		cap = cc.DefaultMonthlyCap
+	}
+
 	fmt.Printf(" %s\n", ui.Style("Command Code", ui.Bold))
 	printCCWindow("5h", creds.Five)
 	printCCWindow("weekly", creds.Weekly)
-	fmt.Printf("     %-8s %.2f credits left (monthly plan balance — requests draw it down; the caps above are rate windows over the same credits)\n",
-		"balance:", creds.Monthly)
+	printCCBalance(cap, creds.Monthly)
 	fmt.Printf("\n%s\n", ui.Dimmed(
 		"'glm active --provider commandcode' anchors the 5h window (first request after its reset starts a new one)"))
 	return nil
@@ -95,6 +99,27 @@ func printCCWindow(label string, w cc.Window) {
 		}
 	}
 	fmt.Printf("     %-8s %s (%.2g/%.2g used, %s)%s\n", label+":", pctStr, w.Used, w.Cap, reset, note)
+}
+
+// printCCBalance renders the monthly credit balance in the same shape as the
+// windows: a colored percentage over the plan allotment (commandcode.monthly_cap).
+func printCCBalance(cap, remaining float64) {
+	used := cap - remaining
+	if used < 0 {
+		used = 0
+	}
+	left := remaining / cap * 100
+	if left > 100 {
+		left = 100
+	}
+	color := ui.Green
+	if left < 20 {
+		color = ui.Red
+	} else if left < 50 {
+		color = ui.Yellow
+	}
+	pctStr := ui.Style(fmt.Sprintf("%.1f%%", left), color, ui.Bold)
+	fmt.Printf("     %-8s %s (%.2g/%.2g used, monthly credits)\n", "balance:", pctStr, used, cap)
 }
 
 func statusAGY() error {

@@ -39,6 +39,12 @@ const (
 	// minimal request. Overridable via commandcode.model in config.
 	DefaultModel = "meta/muse-spark-1.3-contributor"
 
+	// Monthly plan allotment in credits, individual plan ("individual-goat"):
+	// remaining + used summed to exactly 70.000000000 on 2026-09-18. The
+	// credits API reports only the remainder, so a percentage needs this cap;
+	// other plans set commandcode.monthly_cap in config.
+	DefaultMonthlyCap = 70.0
+
 	// Wire identity of the official CLI (captured from v1.56.0 traffic). The
 	// version header is config-overridable so a CLI update never needs a
 	// glm rebuild.

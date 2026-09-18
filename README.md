@@ -167,6 +167,7 @@ commandcode:
   api_key: user_xxxxx         # the commandcode CLI's Bearer token
   # model: meta/muse-spark-1.3-contributor   # warmup model (plan-gated!)
   # cli_version: 1.56.0       # x-command-code-version header override
+  # monthly_cap: 70           # plan allotment for the status percentage
   # proxy: http://...         # routes only commandcode traffic
   schedule:
     auto: true
