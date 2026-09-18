@@ -25,3 +25,10 @@ config.yaml
 
 # Agent session artifacts
 .zcode/
+
+# Local commandcode CLI project settings (permissions allowlist; contains
+# live API keys inside its curl entries — never commit).
+.commandcode/
+
+# Local planning notes.
+docs/superpowers/
