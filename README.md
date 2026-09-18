@@ -56,7 +56,11 @@ glm install --auto        # install the scheduler as a systemd service
 glm install +8 09:00 20:00 # install with a manual schedule (timezone + times)
 glm reload                # reload config without restarting (SIGHUP)
 glm uninstall             # stop, disable, and remove the service
+glm completion zsh        # print shell completion script (bash|zsh|fish|powershell)
 ```
+
+Enable completions (zsh): `glm completion zsh > "${fpath[1]}/_glm"`;
+bash: add `source <(glm completion bash)` to your bashrc.
 
 Every command takes the global `--provider agy` flag to operate on the agy
 scope instead:

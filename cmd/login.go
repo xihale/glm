@@ -186,5 +186,6 @@ func init() {
 	rootCmd.AddCommand(loginCmd)
 	loginCmd.Flags().StringVarP(&apiKeyFlag, "key", "k", "", "GLM API key; agy refresh token or commandcode key with --provider")
 	loginCmd.Flags().StringVar(&poolFlag, "pool", "", "agy pool to anchor: gemini (default) or 3p")
+	loginCmd.RegisterFlagCompletionFunc("pool", completePool)
 	loginCmd.Flags().StringVar(&projectFlag, "project", "", "agy cloudaicompanionProject id (auto-discovered by default)")
 }

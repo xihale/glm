@@ -753,4 +753,5 @@ func init() {
 	activeCmd.Flags().Bool("service", false, "Daemon mode: activate, sleep, repeat")
 	activeCmd.Flags().Bool("debug", false, "Show raw API responses")
 	activeCmd.Flags().String("pool", "", "agy pool to activate: gemini or 3p (default from config)")
+	activeCmd.RegisterFlagCompletionFunc("pool", completePool)
 }

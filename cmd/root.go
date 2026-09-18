@@ -21,9 +21,14 @@ run side by side with independent schedules:
   commandcode -> ~/.config/glm/config.yaml [commandcode] + glm-commandcode.service
 
 Select the provider with the global --provider flag (default: glm).`,
-	CompletionOptions: cobra.CompletionOptions{
-		DisableDefaultCmd: true,
-	},
+}
+
+func completeProvider(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return []string{"glm", "agy", "commandcode"}, cobra.ShellCompDirectiveNoFileComp
+}
+
+func completePool(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return []string{"gemini", "3p"}, cobra.ShellCompDirectiveNoFileComp
 }
 
 func Execute() {
@@ -51,4 +56,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&config.CfgFile, "config", "", "config file (default: ~/.config/glm/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&config.Provider, "provider", "", "provider scope: glm (default), agy, or commandcode (cc) — picks config section and service name")
 	rootCmd.PersistentFlags().Bool("debug", false, "Enable debug logging")
+
+	rootCmd.RegisterFlagCompletionFunc("provider", completeProvider)
+	_ = rootCmd.MarkPersistentFlagFilename("config", "yaml", "yml")
 }
