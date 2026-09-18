@@ -56,11 +56,12 @@ glm install --auto        # install the scheduler as a systemd service
 glm install +8 09:00 20:00 # install with a manual schedule (timezone + times)
 glm reload                # reload config without restarting (SIGHUP)
 glm uninstall             # stop, disable, and remove the service
-glm completion zsh        # print shell completion script (bash|zsh|fish|powershell)
+glm completion            # install completion for the current shell ($SHELL)
 ```
 
-Enable completions (zsh): `glm completion zsh > "${fpath[1]}/_glm"`;
-bash: add `source <(glm completion bash)` to your bashrc.
+Shell completion: run `glm completion` once (for zsh use `sudo glm completion`
+so it lands in /usr/local/share/zsh/site-functions, which is in the stock
+fpath). `glm completion <shell>` prints the raw script instead.
 
 Every command takes the global `--provider agy` flag to operate on the agy
 scope instead:
@@ -171,7 +172,6 @@ commandcode:
   api_key: user_xxxxx         # the commandcode CLI's Bearer token
   # model: meta/muse-spark-1.3-contributor   # warmup model (plan-gated!)
   # cli_version: 1.56.0       # x-command-code-version header override
-  # monthly_cap: 70           # plan allotment for the status percentage
   # proxy: http://...         # routes only commandcode traffic
   schedule:
     auto: true

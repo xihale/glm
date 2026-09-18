@@ -40,10 +40,6 @@ type CommandCodeConfig struct {
 	// CLIVersion overrides the x-command-code-version header; the official
 	// CLI's version moves on without a glm release being needed.
 	CLIVersion string `mapstructure:"cli_version" json:"cli_version" yaml:"cli_version,omitempty"`
-	// MonthlyCap is the plan's monthly credit allotment, shown as a
-	// percentage in `glm status` (the credits API reports only the
-	// remainder). Defaults to the individual plan's 70.
-	MonthlyCap float64 `mapstructure:"monthly_cap" json:"monthly_cap" yaml:"monthly_cap,omitempty"`
 	// Proxy routes only commandcode traffic (http:// or socks5://); falls
 	// back to the shared top-level proxy when empty.
 	Proxy string `mapstructure:"proxy" json:"proxy" yaml:"proxy,omitempty"`

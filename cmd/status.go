@@ -54,15 +54,17 @@ func statusCC() error {
 		return err
 	}
 
-	cap := config.Current.CommandCode.MonthlyCap
-	if cap <= 0 {
-		cap = cc.DefaultMonthlyCap
-	}
+	cap, capErr := cc.NewClient().MonthlyCap(creds.Monthly)
 
 	fmt.Printf(" %s\n", ui.Style("Command Code", ui.Bold))
 	printCCWindow("5h", creds.Five)
 	printCCWindow("weekly", creds.Weekly)
-	printCCBalance(cap, creds.Monthly)
+	if capErr != nil {
+		fmt.Printf("     %-8s %.2f credits left (monthly; allotment unavailable: %v)\n",
+			"balance:", creds.Monthly, capErr)
+	} else {
+		printCCBalance(cap, creds.Monthly)
+	}
 	fmt.Printf("\n%s\n", ui.Dimmed(
 		"'glm active --provider commandcode' anchors the 5h window (first request after its reset starts a new one)"))
 	return nil
@@ -102,7 +104,9 @@ func printCCWindow(label string, w cc.Window) {
 }
 
 // printCCBalance renders the monthly credit balance in the same shape as the
-// windows: a colored percentage over the plan allotment (commandcode.monthly_cap).
+// windows. The allotment is computed from the API (remaining + spent this
+// billing period — see cc.Client.MonthlyCap); it follows plan changes and
+// renewals with no configuration.
 func printCCBalance(cap, remaining float64) {
 	used := cap - remaining
 	if used < 0 {
