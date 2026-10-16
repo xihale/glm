@@ -350,7 +350,7 @@ func (c *Client) token(ctx context.Context) (string, string, error) {
 	if !expiring(a.Tokens.AccessToken, time.Now()) {
 		return a.Tokens.AccessToken, accountID(a), nil
 	}
-	tok, err := refresh(ctx, raw)
+	tok, err := c.refresh(ctx, raw)
 	if err != nil {
 		return "", "", err
 	}
@@ -367,7 +367,7 @@ func (c *Client) forceRefresh(ctx context.Context) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	tok, err := refresh(ctx, raw)
+	tok, err := c.refresh(ctx, raw)
 	if err != nil {
 		return "", "", err
 	}
@@ -434,7 +434,7 @@ func jwtClaims(tok string) map[string]any {
 	return m
 }
 
-func refresh(ctx context.Context, raw map[string]any) (string, error) {
+func (c *Client) refresh(ctx context.Context, raw map[string]any) (string, error) {
 	toks, _ := raw["tokens"].(map[string]any)
 	if toks == nil {
 		return "", fmt.Errorf("Codex CLI auth has no tokens; run codex login")
@@ -461,7 +461,7 @@ func refresh(ctx context.Context, raw map[string]any) (string, error) {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("codex token refresh: %w", err)
 	}
