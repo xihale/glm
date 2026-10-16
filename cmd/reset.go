@@ -44,61 +44,61 @@ var statusResetCmd = &cobra.Command{
 			fmt.Println(ui.Dimmed("engine auth unavailable: " + s.Auth.Reason))
 		}
 
-		fmt.Printf(" %s · %s\n", ui.Style("重置卡 (zproxy "+c.BaseURL+")", ui.Bold), modeColored(s.Mode))
+		fmt.Printf(" %s · %s\n", ui.Style("Reset cards (zproxy "+c.BaseURL+")", ui.Bold), modeColored(s.Mode))
 		order := []string{zproxy.WindowFiveHour, zproxy.WindowWeek}
 		for _, kind := range order {
 			d, ok := s.Windows[kind]
 			if !ok || !d.Supported {
-				continue // 套餐没有该窗口/卡种
+				continue // plan has no such window
 			}
 			label := "5h"
 			if kind == zproxy.WindowWeek {
-				label = "周"
+				label = "week"
 			}
 			rel := func(t int64) string {
 				dur := time.Until(time.UnixMilli(t))
 				if dur < 0 {
-					return "已过期"
+					return "expired"
 				}
 				return shortDur(dur)
 			}
-			cards := "0张"
+			cards := "0 cards"
 			if n := len(d.Cards); n > 0 {
 				sort.Slice(d.Cards, func(i, j int) bool { return d.Cards[i] < d.Cards[j] })
-				cards = fmt.Sprintf("%d张（最早 %s后过期）", n, rel(d.Cards[0]))
+				cards = fmt.Sprintf("%d cards (earliest expires in %s)", n, rel(d.Cards[0]))
 			}
-			win := "无读数"
+			win := "no reading"
 			if d.Window != nil {
 				if d.Window.Percentage != nil {
-					win = fmt.Sprintf("已用 %.0f%%", *d.Window.Percentage)
+					win = fmt.Sprintf("%.0f%% used", *d.Window.Percentage)
 				}
 				if d.Window.NextResetTime != nil {
-					win += " · " + time.UnixMilli(*d.Window.NextResetTime).Local().Format("15:04") + "重置"
+					win += " · reset at " + time.UnixMilli(*d.Window.NextResetTime).Local().Format("15:04")
 				}
 			}
-			last := "从未"
+			last := "never"
 			if t := s.LastUse[kind]; t > 0 {
 				last = time.UnixMilli(t).Local().Format("01-02 15:04")
 			}
-			fmt.Printf("     %-4s %s\n", label+":", ui.Style(cards, ui.Bold))
-			fmt.Printf("     %-4s 窗口 %s · 上次用卡 %s\n", "", win, last)
+			fmt.Printf("     %-5s %s\n", label+":", ui.Style(cards, ui.Bold))
+			fmt.Printf("     %-5s %s · last card %s\n", "", win, last)
 		}
 
 		if s.Claim.NextClaimAt > 0 {
 			t := time.UnixMilli(s.Claim.NextClaimAt)
-			fmt.Printf("     领卡:  %s（%s后）\n", t.Local().Format("15:04:05"), shortDur(time.Until(t)))
+			fmt.Printf("     Claim: %s (in %s)\n", t.Local().Format("15:04:05"), shortDur(time.Until(t)))
 		} else {
-			fmt.Printf("     领卡:  待调度\n")
+			fmt.Printf("     Claim: unscheduled\n")
 		}
 		if d5 := s.Windows[zproxy.WindowFiveHour]; d5.Reason != "" {
-			verb := ui.Dimmed("暂不用卡")
+			verb := ui.Dimmed("hold")
 			if d5.Use {
-				verb = ui.Style("将用卡", ui.Green, ui.Bold)
+				verb = ui.Style("will use", ui.Green, ui.Bold)
 			}
-			fmt.Printf("     引擎:  %s（%s）\n", verb, d5.Reason)
+			fmt.Printf("     Engine: %s (%s)\n", verb, d5.Reason)
 		}
 		fmt.Println()
-		fmt.Println(ui.Dimmed("'glm reset use' 用一张卡立即重置 5h 窗口 · 'glm reset mode manual' 暂停自动用卡"))
+		fmt.Println(ui.Dimmed("'glm reset use' spends a card to reset the 5h window now · 'glm reset mode manual' pauses automatic card use"))
 		return nil
 	},
 }
@@ -135,14 +135,14 @@ var resetUseCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		label := "5 小时"
+		label := "5h"
 		if w == zproxy.WindowWeek {
-			label = "周"
+			label = "week"
 		}
 		if used {
-			ui.Success(fmt.Sprintf("已用一张重置卡，%s窗口已重置", label))
+			ui.Success(fmt.Sprintf("Reset card spent — %s window reset", label))
 		} else {
-			return fmt.Errorf("服务端未确认用卡（无可用卡或已节流）；可先 'glm reset claim'")
+			return fmt.Errorf("server did not confirm card use (no card or throttled); try 'glm reset claim' first")
 		}
 		return nil
 	},
@@ -156,7 +156,7 @@ var resetClaimCmd = &cobra.Command{
 		if err := c.Claim(); err != nil {
 			return err
 		}
-		ui.Success("领取请求已发出（服务端按周期放号，节流时引擎会按 next_try_at 重试）")
+		ui.Success("claim request sent (the server hands out cards on its cycle; on throttle the engine retries at next_try_at)")
 		return nil
 	},
 }
@@ -174,7 +174,7 @@ var resetModeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		ui.Success(fmt.Sprintf("引擎模式已切换为 %s（阈值不变：耗尽≥%.0f%% · 冷却 %.0fmin）",
+		ui.Success(fmt.Sprintf("engine mode set to %s (thresholds unchanged: exhausted ≥%.0f%% · cooldown %.0fmin)",
 			modeColored(p.Mode), p.ExhaustedPct, p.CooldownMin))
 		return nil
 	},
@@ -182,12 +182,12 @@ var resetModeCmd = &cobra.Command{
 
 func modeColored(m string) string {
 	if m == "auto" {
-		return ui.Style("auto（自动）", ui.Green, ui.Bold)
+		return ui.Style("auto", ui.Green, ui.Bold)
 	}
-	return ui.Style("manual（手动）", ui.Yellow, ui.Bold)
+	return ui.Style("manual", ui.Yellow, ui.Bold)
 }
 
-// shortDur renders a duration the way the old magpie row did: 45m, 3h, 6d.
+// shortDur renders a short duration: 45m, 3h, 6d.
 func shortDur(d time.Duration) string {
 	if m := int(d.Minutes()); m < 60 {
 		return fmt.Sprintf("%dm", m)
