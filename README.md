@@ -111,6 +111,21 @@ glm reload --provider codex
 glm uninstall --provider codex
 ```
 
+And the local zproxy gateway's reset cards (zcode-plan-proxy, `--reset-auto`):
+
+```bash
+glm status reset            # card count, windows, engine decision, claim schedule
+glm reset use               # spend one card on the 5h window now
+glm reset use --window week
+glm reset claim             # ask the server for a new card (throttled server-side)
+glm reset mode manual       # pause automatic card use; 'auto' resumes it
+```
+
+The engine (zproxy) keeps its own policy — auto uses cards only when a window
+is exhausted or a card is about to expire; these commands are a remote
+control, plus the full console at `http://127.0.0.1:8870/reset`. Gateway URL:
+`--url` flag or `ZPROXY_URL`, default `http://127.0.0.1:8870`.
+
 `glm install` installs a **system service** by default (boot-persistent, no
 login required). Use `--user` to install a user service instead. The daemon
 runs `active --service`: activate, sleep until next run, repeat.
