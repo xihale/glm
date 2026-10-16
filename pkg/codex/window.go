@@ -28,9 +28,16 @@ const (
 	// WarmSlack matches magpie: an idle window's reset sits a whole span
 	// out, so anything within 10 minutes of that is still "not started".
 	WarmSlack = 10 * time.Minute
-	// IdleRecheck is how soon to look again when usage reports no live
-	// window and no future reset (or a ping did not start one).
+	// IdleRecheck is the floor wait when a computed wake is not in the
+	// future (quota read failed, clock moved back).
 	IdleRecheck = 5 * time.Minute
+	// PostPingWait is how long to wait after a hello before reading usage
+	// again. The read right after the ping usually still shows the idle
+	// placeholder — the window the ping just started looks exactly like one
+	// that never started. Waiting out WarmSlack plus a margin past the
+	// classification boundary lets the next read see the real reset
+	// instead of triggering another hello.
+	PostPingWait = WarmSlack + time.Minute
 	// ResumeSlack is how far wall time must run ahead of the monotonic
 	// timer before a wake counts as suspend. Go timers use CLOCK_MONOTONIC,
 	// which does not advance while the machine sleeps.
@@ -122,12 +129,13 @@ func PlanCheck(w Window, now time.Time) Plan {
 }
 
 // NextAfterPing is the next check after a hello. A window the ping started
-// is waited out; one that is still idle is looked at again after IdleRecheck.
+// is waited out; a read that still shows the idle placeholder is the fresh
+// window's lag, so wait out PostPingWait rather than ping again.
 func NextAfterPing(w Window, now time.Time) time.Time {
 	if w.Open(now) && w.Reset.After(now) {
 		return w.Reset
 	}
-	return now.Add(IdleRecheck)
+	return now.Add(PostPingWait)
 }
 
 // SleptThrough reports that wall time jumped ahead of the monotonic sleep,

@@ -52,8 +52,29 @@ func TestPlanCheck(t *testing.T) {
 	if next := NextAfterPing(live, now); !next.Equal(reset) {
 		t.Fatalf("after ping live: %v", next)
 	}
-	if next := NextAfterPing(idle, now); !next.Equal(now.Add(IdleRecheck)) {
+	if next := NextAfterPing(idle, now); !next.Equal(now.Add(PostPingWait)) {
 		t.Fatalf("after ping still idle: %v", next)
+	}
+}
+
+// TestPingOncePerWindow pins the one-hello contract: right after a ping the
+// usage read still shows the idle placeholder (0% used, reset a full span
+// ahead), and the next wake must land past WarmSlack so the placeholder
+// classifies as open instead of triggering a second hello.
+func TestPingOncePerWindow(t *testing.T) {
+	now := time.Date(2026, 10, 16, 16, 0, 0, 0, time.UTC)
+	span := 5 * time.Hour
+	fresh := Window{Span: span, Reset: now.Add(span)}
+	next := NextAfterPing(fresh, now)
+	if next.Equal(now.Add(IdleRecheck)) {
+		t.Fatalf("post-ping placeholder must not recheck at IdleRecheck: %v", next)
+	}
+	if !fresh.Open(next) {
+		t.Fatalf("window not open at post-ping wake %v (delta %v, slack %v)",
+			next, fresh.Reset.Sub(next), WarmSlack)
+	}
+	if p := PlanCheck(fresh, next); p.Action != ActionWait {
+		t.Fatalf("post-ping check re-pings: %+v", p)
 	}
 }
 
