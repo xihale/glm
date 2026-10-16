@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xihale/glm/pkg/agy"
+	"github.com/xihale/glm/pkg/codex"
 	"github.com/xihale/glm/pkg/config"
 	"github.com/xihale/glm/pkg/ui"
 	"golang.org/x/term"
@@ -35,13 +36,21 @@ commandcode provider (commandcode.ai):
   glm login --provider commandcode -k <key>   # manual, e.g. on a server
 
 The commandcode key is the CLI's static Bearer token ("user_..."); it never
-rotates and drives both the warmup requests and the quota queries.`,
+rotates and drives both the warmup requests and the quota queries.
+
+codex provider (ChatGPT via the local Codex CLI):
+  glm login --provider codex
+
+Codex keeps its own auth.json. login only checks that a ChatGPT sign-in is
+there; the daemon reads and refreshes that file itself.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		switch config.EffectiveProvider() {
 		case "agy":
 			return loginAGY()
 		case "commandcode":
 			return loginCC()
+		case "codex":
+			return loginCodex()
 		}
 		return loginGLM()
 	},
@@ -166,6 +175,19 @@ func loginCC() error {
 	}
 
 	ui.Success("commandcode API key saved")
+	return nil
+}
+
+func loginCodex() error {
+	plan, err := codex.LoggedIn(config.Current.Codex)
+	if err != nil {
+		return err
+	}
+	if plan == "" {
+		plan = "chatgpt"
+	}
+	ui.Success(fmt.Sprintf("Codex CLI login found (plan: %s) at %s", plan, codex.Home(config.Current.Codex)))
+	ui.Info("No key is copied. 'glm install --provider codex --auto' anchors the 5h window.")
 	return nil
 }
 

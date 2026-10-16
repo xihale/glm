@@ -5,6 +5,7 @@ import (
 
 	"github.com/xihale/glm/pkg/agy"
 	"github.com/xihale/glm/pkg/cc"
+	"github.com/xihale/glm/pkg/codex"
 	"github.com/xihale/glm/pkg/config"
 	"github.com/xihale/glm/pkg/glm"
 )
@@ -38,6 +39,8 @@ func newProviderClientFor(cfg config.Config, pool string) (providerClient, error
 			return nil, fmt.Errorf("no API key configured. Run 'glm login --provider commandcode' first")
 		}
 		return cc.NewClientFrom(cfg), nil
+	case "codex":
+		return codex.NewClientFrom(cfg), nil
 	default:
 		if cfg.APIKey == "" {
 			return nil, fmt.Errorf("no API key configured. Run 'glm login' first")
@@ -64,6 +67,8 @@ func providerArg() string {
 		return "--provider agy"
 	case "commandcode":
 		return "--provider commandcode"
+	case "codex":
+		return "--provider codex"
 	}
 	return ""
 }
@@ -92,6 +97,9 @@ func scheduleForScope(cfg config.Config, pool string) config.ScheduleConfig {
 	}
 	if config.EffectiveProvider() == "commandcode" && !cfg.CommandCode.Schedule.IsEmpty() {
 		return cfg.CommandCode.Schedule
+	}
+	if config.EffectiveProvider() == "codex" && !cfg.Codex.Schedule.IsEmpty() {
+		return cfg.Codex.Schedule
 	}
 	return cfg.Schedule
 }

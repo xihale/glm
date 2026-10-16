@@ -1,11 +1,13 @@
 # glm
 
 Quota monitor and activation tool for the GLM coding plan, Google Antigravity
-(Gemini), and Command Code, with systemd-based scheduling.
+(Gemini), Command Code, and ChatGPT Codex, with systemd-based scheduling.
 
 All backends share the same 5-hour window model, so one daemon drives any of
 them: it wakes at the reported reset (or the configured schedule), fires a
 minimal request to anchor a fresh window, and verifies via the quota API.
+Codex is the exception on *when* it fires: the hello goes out only when the
+5h window is not already open.
 
 ## Providers
 
@@ -27,6 +29,16 @@ individual plan, plus a rolling weekly one); the warmup is a single minimal
 Models are plan-gated — the default warmup model answers on the individual
 plan, set `commandcode.model` to change it.
 
+`codex` — ChatGPT Codex, using the local Codex CLI login (`~/.codex/auth.json`,
+or `CODEX_HOME`). Quota is `GET /backend-api/wham/usage`. The 5h window starts
+at the first request after the previous one ends, so the daemon does not ping
+on startup when the window is already open: it sleeps until the reported
+reset (wall clock, in 30s chunks, so a suspend is noticed on wake), reads
+usage again, and sends one `gpt-6-luna` `"hello"` only if the window is not
+open. Real use that moved the reset just updates the next check. A boot after
+shutdown is the same check. Tokens stay in the CLI's auth.json and are
+refreshed in place when they are about to expire.
+
 Each pool can have its own schedule (and warmup model) via `agy.pools`; the
 daemon then runs one independent anchor loop per pool. A pool with
 `weekly_only: true` drops 5h anchoring entirely — its 5h window stays passive
@@ -37,10 +49,10 @@ weekly reset. With a single config
 file, `--provider` picks the section (and systemd unit), so all daemons run
 side by side:
 
-| | glm | agy | commandcode |
-|---|---|---|---|
-| config section | top level (`api_key`, `schedule`) | `agy:` (refresh_token, `pools`/`schedule`) | `commandcode:` (`api_key`, `schedule`) |
-| service | `glm.service` | `glm-agy.service` | `glm-commandcode.service` |
+| | glm | agy | commandcode | codex |
+|---|---|---|---|---|
+| config section | top level (`api_key`, `schedule`) | `agy:` (refresh_token, `pools`/`schedule`) | `commandcode:` (`api_key`, `schedule`) | `codex:` (no key; `model`, `schedule`) |
+| service | `glm.service` | `glm-agy.service` | `glm-commandcode.service` | `glm-codex.service` |
 
 (An explicit `--config` path overrides the default file for all providers.)
 Access token and project id are cached in `~/.cache/glm/agy.json` (0600) so a
@@ -86,6 +98,17 @@ glm active --provider commandcode           # one-shot warmup of the 5h window
 glm install --provider commandcode --auto   # glm-commandcode.service
 glm reload --provider commandcode
 glm uninstall --provider commandcode
+```
+
+And for Codex (the Codex CLI must already be signed in with ChatGPT):
+
+```bash
+glm login --provider codex              # checks ~/.codex/auth.json; copies nothing
+glm status --provider codex             # 5h + weekly, and whether the 5h window is open
+glm active --provider codex             # one hello, only if the 5h window is not open
+glm install --provider codex --auto     # glm-codex.service; follows the API reset
+glm reload --provider codex
+glm uninstall --provider codex
 ```
 
 `glm install` installs a **system service** by default (boot-persistent, no
@@ -176,6 +199,15 @@ commandcode:
   # proxy: http://...         # routes only commandcode traffic
   schedule:
     auto: true
+
+# --- codex provider (no key; uses the Codex CLI login) ---
+codex:
+  # model: gpt-6-luna          # hello model
+  # effort: low
+  # home: ~/.codex             # or CODEX_HOME
+  # cli_version: 0.163.0       # User-Agent; default is models_cache.json
+  schedule:
+    auto: true                 # recorded by install; the loop follows the API reset
 ```
 
 Every `pools:` entry must set at least one key — an empty `pool: {}` is

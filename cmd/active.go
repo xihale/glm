@@ -22,10 +22,11 @@ var activeCmd = &cobra.Command{
 	Short: "Send heartbeat to activate quota (glm or agy provider)",
 	Long: `Send a minimal request to activate the quota window.
 
-Works with all providers selected in config ('glm', 'agy', or 'commandcode'):
+Works with all providers selected in config ('glm', 'agy', 'commandcode', or 'codex'):
   glm         - GLM coding plan 5h tokens window (heartbeat to chat API)
   agy         - Antigravity/Gemini 5h pool (minimal warmup generateContent)
   commandcode - Command Code 5h credits window (minimal warmup /responses)
+  codex       - ChatGPT Codex 5h window (gpt-6-luna "hello" only when it is not open)
 
 Verifies activation by polling quota after the request.
 Use --force to activate even when the window is live.
@@ -77,6 +78,9 @@ With --service, runs as a daemon: activate, sleep until next run, repeat.`,
 // agy.pools, or a single loop for the legacy `pool` setting. Each loop owns
 // its own schedule, state machine, and signal handling.
 func runDaemon(debug, force bool) error {
+	if config.EffectiveProvider() == "codex" {
+		return runCodexDaemon(debug, force)
+	}
 	cfg := config.Snapshot()
 	pools := daemonPools(cfg)
 
@@ -517,6 +521,7 @@ const (
 	sleepDone sleepOutcome = iota
 	sleepSignal
 	sleepReload
+	sleepResume
 )
 
 // sleepOr waits for d, interrupted by shutdown or config-reload signals.

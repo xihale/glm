@@ -25,6 +25,31 @@ type Config struct {
 	// CommandCode provider section (commandcode.ai) with its own key and
 	// schedule.
 	CommandCode CommandCodeConfig `mapstructure:"commandcode" json:"commandcode" yaml:"commandcode,omitempty"`
+	// Codex provider: the local Codex CLI's ChatGPT login. The daemon reads
+	// /wham/usage and, when the 5h window is not open, sends one gpt-6-luna
+	// hello. Tokens stay in the CLI's auth.json; this section is policy only.
+	Codex CodexConfig `mapstructure:"codex" json:"codex" yaml:"codex,omitempty"`
+}
+
+// CodexConfig is policy for the Codex 5h anchor. Credentials are the Codex
+// CLI's own auth.json (CODEX_HOME or ~/.codex); nothing secret is copied here.
+type CodexConfig struct {
+	// Home overrides the Codex CLI state directory (auth.json, models cache).
+	Home string `mapstructure:"home" json:"home" yaml:"home,omitempty"`
+	// Model is the warm-up model (default gpt-6-luna).
+	Model string `mapstructure:"model" json:"model" yaml:"model,omitempty"`
+	// Effort is the reasoning effort on the ping (default low).
+	Effort string `mapstructure:"effort" json:"effort" yaml:"effort,omitempty"`
+	// Endpoint overrides the Codex responses base (default chatgpt.com/.../codex).
+	Endpoint string `mapstructure:"endpoint" json:"endpoint" yaml:"endpoint,omitempty"`
+	// CLIVersion overrides the codex_cli_rs version in the User-Agent. Empty
+	// uses models_cache.json's client_version, then a built-in fallback.
+	CLIVersion string `mapstructure:"cli_version" json:"cli_version" yaml:"cli_version,omitempty"`
+	// Proxy routes only Codex traffic; falls back to the shared proxy.
+	Proxy string `mapstructure:"proxy" json:"proxy" yaml:"proxy,omitempty"`
+	// Schedule records that the daemon is installed. The loop itself follows
+	// the 5h reset reported by the API, not clock times.
+	Schedule ScheduleConfig `mapstructure:"schedule" json:"schedule" yaml:"schedule,omitempty"`
 }
 
 // CommandCodeConfig holds credentials and policy for the Command Code
@@ -108,6 +133,10 @@ func (c Config) ScheduleFor(provider string) ScheduleConfig {
 		if !c.CommandCode.Schedule.IsEmpty() {
 			return c.CommandCode.Schedule
 		}
+	case "codex":
+		if !c.Codex.Schedule.IsEmpty() {
+			return c.Codex.Schedule
+		}
 	}
 	return c.Schedule
 }
@@ -170,6 +199,8 @@ func EffectiveProvider() string {
 		return "agy"
 	case "commandcode", "cc":
 		return "commandcode"
+	case "codex":
+		return "codex"
 	}
 	return "glm"
 }

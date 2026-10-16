@@ -3,25 +3,28 @@ package cmd
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/xihale/glm/pkg/agy"
 	"github.com/xihale/glm/pkg/cc"
+	"github.com/xihale/glm/pkg/codex"
 	"github.com/xihale/glm/pkg/config"
 	"github.com/xihale/glm/pkg/glm"
 	"github.com/xihale/glm/pkg/ui"
-
-	"github.com/spf13/cobra"
 )
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show quota status (glm, agy, or commandcode provider)",
+	Short: "Show quota status (glm, agy, commandcode, or codex)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		switch config.EffectiveProvider() {
 		case "agy":
 			return statusAGY()
 		case "commandcode":
 			return statusCC()
+		case "codex":
+			return statusCodex()
 		}
 
 		if config.Current.APIKey == "" {
@@ -68,6 +71,49 @@ func statusCC() error {
 	fmt.Printf("\n%s\n", ui.Dimmed(
 		"'glm active --provider commandcode' anchors the 5h window (first request after its reset starts a new one)"))
 	return nil
+}
+
+func statusCodex() error {
+	client := codex.NewClient()
+	usage, err := client.Usage()
+	if err != nil {
+		ui.Error(fmt.Sprintf("Failed to get quota: %v", err))
+		return err
+	}
+	now := time.Now()
+	title := "Codex"
+	if usage.Plan != "" {
+		title += " (" + usage.Plan + ")"
+	}
+	fmt.Printf(" %s\n", ui.Style(title, ui.Bold))
+	printCodexWindow("5h", usage.Five, now)
+	printCodexWindow("weekly", usage.Week, now)
+	fmt.Printf("\n%s\n", ui.Dimmed(
+		"'glm active --service --provider codex' waits for the 5h reset, then sends gpt-6-luna \"hello\" only if that window is not open"))
+	return nil
+}
+
+func printCodexWindow(label string, w codex.Window, now time.Time) {
+	if w.Span <= 0 && w.Reset.IsZero() {
+		return
+	}
+	left := 100 - w.UsedPercent
+	if left < 0 {
+		left = 0
+	}
+	state := "not open"
+	reset := "no reset"
+	if !w.Reset.IsZero() {
+		reset = w.Reset.Local().Format("2006-01-02 15:04:05")
+	}
+	if w.Open(now) {
+		state = "open until " + reset
+	} else if !w.Reset.IsZero() && w.Reset.After(now) {
+		state = "not open (placeholder " + reset + ")"
+	} else if !w.Reset.IsZero() {
+		state = "not open (reset " + reset + " passed)"
+	}
+	fmt.Printf("     %-8s %.0f%% left, %s\n", label+":", left, state)
 }
 
 func printCCWindow(label string, w cc.Window) {

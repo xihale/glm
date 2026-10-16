@@ -146,6 +146,9 @@ func storeSchedule(sched config.ScheduleConfig) error {
 	case "commandcode":
 		config.Current.CommandCode.Schedule = sched
 		viper.Set("commandcode.schedule", sched)
+	case "codex":
+		config.Current.Codex.Schedule = sched
+		viper.Set("codex.schedule", sched)
 	default:
 		config.Current.Schedule = sched
 		viper.Set("schedule", sched)
@@ -219,6 +222,8 @@ func serviceUnitName() string {
 		return "glm-agy.service"
 	case "commandcode":
 		return "glm-commandcode.service"
+	case "codex":
+		return "glm-codex.service"
 	}
 	return "glm.service"
 }
